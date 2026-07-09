@@ -196,8 +196,10 @@
     <textarea id="pasteArea" placeholder="ここに貼り付け(&lt;&lt;&lt;PCEXPORT v1 count=... で始まるテキスト)"></textarea>
     <div class="row">
       <button id="parseButton" class="primary grow" type="button">解析する</button>
+      <button id="fileButton" type="button">ファイルを開く</button>
       <button id="clearButton" type="button">クリア</button>
     </div>
+    <input id="fileInput" type="file" accept=".md,.txt,text/markdown,text/plain" style="display:none;" />
     <div id="status"></div>
   </div>
 
@@ -239,6 +241,8 @@
 
   var pasteArea = document.getElementById("pasteArea");
   var parseButton = document.getElementById("parseButton");
+  var fileButton = document.getElementById("fileButton");
+  var fileInput = document.getElementById("fileInput");
   var clearButton = document.getElementById("clearButton");
   var statusEl = document.getElementById("status");
   var viewer = document.getElementById("viewer");
@@ -381,6 +385,25 @@
     } catch (e) {
       statusEl.textContent = "解析失敗: " + e.message;
     }
+  });
+
+  fileButton.addEventListener("click", function () {
+    fileInput.value = "";
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", function () {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      pasteArea.value = String(reader.result || "");
+      statusEl.textContent = file.name + " を読み込みました。内容を確認して「解析する」を押してください。";
+    };
+    reader.onerror = function () {
+      statusEl.textContent = "ファイルの読み込みに失敗しました: " + file.name;
+    };
+    reader.readAsText(file, "utf-8");
   });
 
   clearButton.addEventListener("click", function () {
