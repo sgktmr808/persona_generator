@@ -226,16 +226,20 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .review-preview {
-    display: none;
-    width: 100%;
-    max-height: 58vh;
-    margin-top: 10px;
-    border-radius: 10px;
-    background: #080407;
-    object-fit: contain;
-  }
-  .review-preview.visible { display: block; }
+  .generation-id-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .generation-id { color: var(--accent-2); font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .image-count { margin: 8px 0 0; color: var(--text-dim); font-size: 12px; }
+  .review-image-list { display: grid; gap: 12px; margin-top: 12px; }
+  .review-image-card { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #080407; }
+  .review-image-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .rank-badge { flex: 0 0 auto; min-width: 44px; padding: 6px 8px; border-radius: 999px; background: var(--accent-grad); color: #fff; font-size: 12px; font-weight: 700; text-align: center; }
+  .image-name { min-width: 0; flex: 1; color: var(--text-dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .review-image-preview { display: block; width: 100%; max-height: 52vh; border-radius: 9px; background: #050308; object-fit: contain; }
+  .image-order-actions { display: grid; grid-template-columns: 1fr 1fr auto; gap: 7px; margin-top: 8px; }
+  .image-order-actions button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
+  .image-detail { margin-top: 8px; }
+  .image-detail textarea { min-height: 76px; font-size: 15px; }
+  .comparison-note { min-height: 90px; }
   .rating-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
   .verdict-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
   .choice-option { position: relative; }
@@ -259,7 +263,6 @@
   .failure-option input:checked + span { border-color: var(--danger); background: rgba(255,77,94,0.12); color: var(--text); }
   .review-nav { display: grid; grid-template-columns: 48px 1fr 48px; gap: 8px; margin-top: 10px; }
   .review-nav .nav-btn { padding: 10px 0; }
-  .batch-image-status { margin-top: 8px; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .review-status { min-height: 20px; margin-top: 10px; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
   .review-status.error { color: var(--danger); }
   .review-history { display: grid; gap: 8px; margin-top: 10px; }
@@ -312,6 +315,11 @@
       <span class="count"><span id="curNo">0</span> / <span id="totalNo">0</span></span>
     </div>
 
+    <div class="generation-id-row">
+      <div><div class="field-label" style="margin:0 0 3px;">生成ID</div><div id="extractGenerationId" class="generation-id"></div></div>
+      <button id="copyExtractGenerationIdButton" type="button">IDをコピー</button>
+    </div>
+
     <div id="promptBox" class="prompt-box"></div>
 
     <div class="jump-row">
@@ -349,56 +357,29 @@
           <button id="reviewJumpUnreviewedButton" type="button">次の未レビューへ</button>
           <button id="reviewNextButton" class="nav-btn" type="button" aria-label="次の候補">▶</button>
         </div>
-        <label class="field-label" for="reviewBatchImages">画像をまとめて選択（任意）</label>
-        <input id="reviewBatchImages" type="file" accept="image/*" multiple />
-        <div id="reviewBatchStatus" class="batch-image-status">選択順に1件目から割り当てます。個別選択もできます。</div>
       </div>
 
       <div class="card">
+        <div class="generation-id-row">
+          <div><div class="field-label" style="margin:0 0 3px;">生成ID</div><div id="reviewGenerationId" class="generation-id"></div></div>
+          <button id="copyGenerationIdButton" type="button">IDをコピー</button>
+        </div>
         <div id="reviewCurrentPrompt" class="review-prompt"></div>
         <details>
           <summary>このプロンプトの設定を見る</summary>
           <pre id="reviewCurrentSettings" class="settings-json"></pre>
         </details>
 
-        <label class="field-label" for="reviewImage">このプロンプトで生成した画像</label>
-        <input id="reviewImage" type="file" accept="image/*" />
-        <img id="reviewPreview" class="review-preview" alt="レビューする生成画像" />
+        <label class="field-label" for="reviewImages">この生成IDの画像（最大5枚）</label>
+        <input id="reviewImages" type="file" accept="image/*" multiple />
+        <div id="reviewImageCount" class="image-count">0 / 5枚</div>
+        <div id="reviewImageList" class="review-image-list"></div>
 
-        <div class="field-label">採否</div>
-        <div class="verdict-grid">
-          <label class="choice-option"><input type="radio" name="reviewVerdict" value="accept" /><span>採用</span></label>
-          <label class="choice-option"><input type="radio" name="reviewVerdict" value="hold" /><span>保留</span></label>
-          <label class="choice-option"><input type="radio" name="reviewVerdict" value="reject" /><span>不採用</span></label>
-        </div>
-
-        <div class="field-label">美的満足度</div>
-        <div class="rating-grid">
-          <label class="choice-option"><input type="radio" name="reviewAesthetic" value="1" /><span>1</span></label>
-          <label class="choice-option"><input type="radio" name="reviewAesthetic" value="2" /><span>2</span></label>
-          <label class="choice-option"><input type="radio" name="reviewAesthetic" value="3" /><span>3</span></label>
-          <label class="choice-option"><input type="radio" name="reviewAesthetic" value="4" /><span>4</span></label>
-          <label class="choice-option"><input type="radio" name="reviewAesthetic" value="5" /><span>5</span></label>
-        </div>
-
-        <div class="field-label">意図一致度</div>
-        <div class="rating-grid">
-          <label class="choice-option"><input type="radio" name="reviewIntent" value="1" /><span>1</span></label>
-          <label class="choice-option"><input type="radio" name="reviewIntent" value="2" /><span>2</span></label>
-          <label class="choice-option"><input type="radio" name="reviewIntent" value="3" /><span>3</span></label>
-          <label class="choice-option"><input type="radio" name="reviewIntent" value="4" /><span>4</span></label>
-          <label class="choice-option"><input type="radio" name="reviewIntent" value="5" /><span>5</span></label>
-        </div>
-
-        <details>
-          <summary>失敗分類・メモ（任意）</summary>
-          <div id="reviewFailures" class="failure-grid"></div>
-          <label class="field-label" for="reviewNotes">気づいたこと</label>
-          <textarea id="reviewNotes" placeholder="良かった点、崩れた点、次に変えたいこと"></textarea>
-        </details>
+        <label class="field-label" for="reviewComparisonNotes">1位を選んだ理由・比較メモ（任意）</label>
+        <textarea id="reviewComparisonNotes" class="comparison-note" placeholder="例：顔の雰囲気と光が最も意図に近い"></textarea>
 
         <div class="row">
-          <button id="saveReviewOnlyButton" class="grow" type="button">ここで保存（次へ進まない）</button>
+          <button id="saveReviewOnlyButton" class="grow" type="button">この順位で保存</button>
         </div>
         <div id="reviewStatus" class="review-status" aria-live="polite"></div>
       </div>
@@ -428,7 +409,7 @@
 
 <div class="review-bottom-bar" id="reviewBottomBar">
   <button id="reviewBottomPrevButton" class="nav-btn" type="button" aria-label="前のレビュー候補">◀</button>
-  <button id="reviewBottomSaveButton" class="primary grow" type="button">保存して次へ</button>
+  <button id="reviewBottomSaveButton" class="primary grow" type="button">この順位で保存して次へ</button>
   <button id="reviewBottomNextButton" class="nav-btn" type="button" aria-label="次のレビュー候補">▶</button>
 </div>
 
@@ -438,7 +419,8 @@
   var STORAGE_KEY = "personaGenerator.lastBatch.v1";
   var REVIEW_STORAGE_KEY = "personaGenerator.promptReviews.v1";
   var REVIEW_IMAGE_DB = "personaGeneratorReviewImages";
-  var REVIEW_IMAGE_STORE = "images";
+  var REVIEW_IMAGE_STORE = "reviewImagesV2";
+  var LEGACY_IMAGE_STORE = "images";
 
   var pasteArea = document.getElementById("pasteArea");
   var parseButton = document.getElementById("parseButton");
@@ -456,6 +438,7 @@
   var nextButton = document.getElementById("nextButton");
   var copyPromptButton = document.getElementById("copyPromptButton");
   var copySettingsButton = document.getElementById("copySettingsButton");
+  var copyExtractGenerationIdButton = document.getElementById("copyExtractGenerationIdButton");
   var jumpInput = document.getElementById("jumpInput");
   var jumpButton = document.getElementById("jumpButton");
   var extractTab = document.getElementById("extractTab");
@@ -471,10 +454,10 @@
 
   var items = [];
   var index = 0;
+  var batchId = "";
   var activeView = "extract";
-  var reviewFiles = [];
-  var reviewPreviewUrls = [];
   var reviewDrafts = {};
+  var reviewBlobUrls = {};
   var reviewRenderedIndex = -1;
   var failureTypes = [
     ["composition", "構図"], ["hair", "髪"], ["makeup", "メイク"],
@@ -522,7 +505,7 @@
 
   function saveToStorage() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: items, index: index, ts: Date.now() }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: items, index: index, batchId: batchId, ts: Date.now() }));
     } catch (_) { /* 容量超過等は無視(表示は継続) */ }
   }
 
@@ -534,6 +517,7 @@
       if (!parsed || !Array.isArray(parsed.items) || !parsed.items.length) return false;
       items = parsed.items;
       index = typeof parsed.index === "number" ? parsed.index : 0;
+      batchId = parsed.batchId || "batch-legacy-" + shortHash(JSON.stringify(items));
       return true;
     } catch (_) { return false; }
   }
@@ -554,14 +538,28 @@
     }
   }
 
-  function sourceKey(item) {
-    var text = String(item.prompt || "") + "\n" + (item.settings ? JSON.stringify(item.settings) : String(item.settingsRaw || ""));
+  function shortHash(text) {
+    text = String(text || "");
     var hash = 2166136261;
     for (var i = 0; i < text.length; i++) {
       hash ^= text.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
-    return "pcx-" + (hash >>> 0).toString(16).padStart(8, "0");
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function legacySourceKey(item) {
+    var text = String(item.prompt || "") + "\n" + (item.settings ? JSON.stringify(item.settings) : String(item.settingsRaw || ""));
+    return "pcx-" + shortHash(text);
+  }
+
+  function generationId(item) {
+    var contentHash = legacySourceKey(item).slice(4);
+    return "gen-" + batchId + "-p" + String(item.no || index + 1).padStart(3, "0") + "-" + contentHash;
+  }
+
+  function sourceKey(item) {
+    return generationId(item);
   }
 
   function readReviews() {
@@ -831,11 +829,10 @@
   function jumpToUnreviewed() {
     if (!items.length) return;
     captureReviewDraft();
-    var keys = reviewedKeys();
     var found = -1;
     for (var step = 1; step <= items.length; step++) {
       var candidate = (index + step) % items.length;
-      if (!keys[sourceKey(items[candidate])]) { found = candidate; break; }
+      if (!reviewForItem(items[candidate])) { found = candidate; break; }
     }
     if (found < 0) {
       setReviewStatus("すべてレビュー済みです。", false);
@@ -952,6 +949,472 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 0);
     setReviewStatus(reviews.length + "件のレビューをJSONLで書き出しました。", false);
   }
+
+  // v2: 表示中の生成IDだけを対象に、最大5枚を順位付きで保存する。
+  function openReviewImageDb() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error("indexedDB unavailable")); return; }
+      var request = indexedDB.open(REVIEW_IMAGE_DB, 2);
+      request.onupgradeneeded = function () {
+        var db = request.result;
+        if (!db.objectStoreNames.contains(REVIEW_IMAGE_STORE)) {
+          db.createObjectStore(REVIEW_IMAGE_STORE, { keyPath: "imageId" });
+        }
+      };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { reject(request.error || new Error("image database open failed")); };
+    });
+  }
+
+  function putStoredImage(imageId, generationIdValue, file, hash) {
+    return openReviewImageDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(REVIEW_IMAGE_STORE, "readwrite");
+        tx.objectStore(REVIEW_IMAGE_STORE).put({
+          imageId: imageId,
+          generationId: generationIdValue,
+          blob: file,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          lastModified: file.lastModified,
+          sha256: hash || "",
+          updatedAt: new Date().toISOString()
+        });
+        tx.oncomplete = function () { db.close(); resolve(); };
+        tx.onerror = function () { db.close(); reject(tx.error || new Error("image save failed")); };
+        tx.onabort = function () { db.close(); reject(tx.error || new Error("image save aborted")); };
+      });
+    });
+  }
+
+  function getStoredImage(imageId) {
+    return openReviewImageDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(REVIEW_IMAGE_STORE, "readonly");
+        var request = tx.objectStore(REVIEW_IMAGE_STORE).get(imageId);
+        request.onsuccess = function () { resolve(request.result || null); };
+        request.onerror = function () { reject(request.error || new Error("image read failed")); };
+        tx.oncomplete = function () { db.close(); };
+      });
+    }).catch(function () { return null; });
+  }
+
+  function getLegacyStoredImage(key) {
+    return openReviewImageDb().then(function (db) {
+      if (!db.objectStoreNames.contains(LEGACY_IMAGE_STORE)) { db.close(); return null; }
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(LEGACY_IMAGE_STORE, "readonly");
+        var request = tx.objectStore(LEGACY_IMAGE_STORE).get(key);
+        request.onsuccess = function () { resolve(request.result || null); };
+        request.onerror = function () { reject(request.error || new Error("legacy image read failed")); };
+        tx.oncomplete = function () { db.close(); };
+      });
+    }).catch(function () { return null; });
+  }
+
+  function deleteStoredImage(imageId) {
+    return openReviewImageDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(REVIEW_IMAGE_STORE, "readwrite");
+        tx.objectStore(REVIEW_IMAGE_STORE).delete(imageId);
+        tx.oncomplete = function () { db.close(); resolve(); };
+        tx.onerror = function () { db.close(); reject(tx.error || new Error("image delete failed")); };
+      });
+    }).catch(function () { return; });
+  }
+
+  function clearStoredImages() {
+    return openReviewImageDb().then(function (db) {
+      var stores = [REVIEW_IMAGE_STORE];
+      if (db.objectStoreNames.contains(LEGACY_IMAGE_STORE)) stores.push(LEGACY_IMAGE_STORE);
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(stores, "readwrite");
+        stores.forEach(function (store) { tx.objectStore(store).clear(); });
+        tx.oncomplete = function () { db.close(); resolve(); };
+        tx.onerror = function () { db.close(); reject(tx.error || new Error("image clear failed")); };
+      });
+    }).catch(function () { return; });
+  }
+
+  function reviewForItem(item) {
+    var key = sourceKey(item);
+    var legacyKey = legacySourceKey(item);
+    var allowLegacy = batchId.indexOf("batch-legacy-") === 0;
+    var reviews = readReviews();
+    for (var i = reviews.length - 1; i >= 0; i--) {
+      var review = reviews[i];
+      if (!review) continue;
+      if (review.generationId === key || review.sourceKey === key) return review;
+      if (allowLegacy && review.sourceKey === legacyKey) return review;
+    }
+    return null;
+  }
+
+  function reviewImageEntry(metadata, evaluation, notes, imageId, legacyStoreKey) {
+    return {
+      imageId: imageId,
+      file: null,
+      metadata: metadata || null,
+      evaluation: {
+        verdict: evaluation && evaluation.verdict || "",
+        aestheticSatisfaction: evaluation && evaluation.aestheticSatisfaction || "",
+        intentMatch: evaluation && evaluation.intentMatch || "",
+        failures: evaluation && Array.isArray(evaluation.failures) ? evaluation.failures.slice() : []
+      },
+      notes: notes || "",
+      legacyStoreKey: legacyStoreKey || ""
+    };
+  }
+
+  function draftForItem(item) {
+    if (reviewDrafts[index]) return reviewDrafts[index];
+    var existing = reviewForItem(item);
+    var draft = { images: [], comparisonNotes: "", removedImageIds: [] };
+    if (existing && Array.isArray(existing.images)) {
+      draft.images = existing.images.slice().sort(function (a, b) { return (a.rank || 99) - (b.rank || 99); }).map(function (image) {
+        return reviewImageEntry(image.metadata, image.evaluation, image.notes, image.imageId, "");
+      });
+      draft.comparisonNotes = existing.comparison && existing.comparison.notes || "";
+    } else if (existing && existing.image) {
+      draft.images.push(reviewImageEntry(existing.image, existing.evaluation, existing.notes,
+        "legacy-" + existing.sourceKey, existing.sourceKey));
+    }
+    reviewDrafts[index] = draft;
+    return draft;
+  }
+
+  function captureReviewDraft() {
+    if (reviewRenderedIndex < 0 || !items[reviewRenderedIndex]) return;
+    var draft = reviewDrafts[reviewRenderedIndex];
+    if (draft) draft.comparisonNotes = document.getElementById("reviewComparisonNotes").value;
+  }
+
+  function reviewedKeys() {
+    var keys = {};
+    readReviews().forEach(function (review) {
+      if (!review) return;
+      if (review.generationId) keys[review.generationId] = true;
+      if (review.sourceKey) keys[review.sourceKey] = true;
+    });
+    return keys;
+  }
+
+  function renderReviewProgress() {
+    var reviewed = items.reduce(function (count, item) { return count + (reviewForItem(item) ? 1 : 0); }, 0);
+    document.getElementById("reviewProgress").textContent = "レビュー済み " + reviewed + " / " + items.length;
+    document.getElementById("reviewPosition").textContent = (items.length ? index + 1 : 0) + " / " + items.length;
+  }
+
+  function renderReviewHistory() {
+    var reviews = readReviews();
+    reviewHistory.textContent = "";
+    if (!reviews.length) {
+      var empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "まだレビュー記録はありません。";
+      reviewHistory.appendChild(empty);
+      return;
+    }
+    reviews.slice().reverse().slice(0, 20).forEach(function (review) {
+      var row = document.createElement("div");
+      row.className = "history-item";
+      var title = document.createElement("strong");
+      var imageCount = Array.isArray(review.images) ? review.images.length : (review.image ? 1 : 0);
+      title.textContent = (review.generationId || review.sourceKey) + " · " + imageCount + "枚";
+      var details = document.createElement("div");
+      if (Array.isArray(review.images) && review.images[0]) {
+        details.textContent = "1位: " + (review.images[0].metadata && review.images[0].metadata.name || review.images[0].imageId);
+      } else {
+        details.textContent = "旧形式のレビュー記録";
+      }
+      var date = document.createElement("div");
+      date.textContent = new Date(review.updatedAt || review.createdAt).toLocaleString("ja-JP");
+      date.style.color = "var(--text-dim)";
+      row.appendChild(title);
+      row.appendChild(details);
+      row.appendChild(date);
+      reviewHistory.appendChild(row);
+    });
+  }
+
+  function makeChoiceGrid(image, key, options, className) {
+    var grid = document.createElement("div");
+    grid.className = className;
+    options.forEach(function (option) {
+      var label = document.createElement("label");
+      label.className = "choice-option";
+      var input = document.createElement("input");
+      input.type = "radio";
+      input.name = key + "-" + image.imageId;
+      input.value = option[0];
+      input.checked = String(image.evaluation[key] || "") === String(option[0]);
+      input.addEventListener("change", function () { image.evaluation[key] = input.value; });
+      var span = document.createElement("span");
+      span.textContent = option[1];
+      label.appendChild(input);
+      label.appendChild(span);
+      grid.appendChild(label);
+    });
+    return grid;
+  }
+
+  function makeFailureGrid(image) {
+    var grid = document.createElement("div");
+    grid.className = "failure-grid";
+    failureTypes.forEach(function (failure) {
+      var label = document.createElement("label");
+      label.className = "failure-option";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = failure[0];
+      input.checked = image.evaluation.failures.indexOf(failure[0]) >= 0;
+      input.addEventListener("change", function () {
+        image.evaluation.failures = failureTypes.map(function (entry) { return entry[0]; }).filter(function (value) {
+          return value === failure[0] ? input.checked : image.evaluation.failures.indexOf(value) >= 0;
+        });
+      });
+      var span = document.createElement("span");
+      span.textContent = failure[1];
+      label.appendChild(input);
+      label.appendChild(span);
+      grid.appendChild(label);
+    });
+    return grid;
+  }
+
+  function loadImagePreview(image, img) {
+    if (reviewBlobUrls[image.imageId]) { img.src = reviewBlobUrls[image.imageId]; return; }
+    if (image.file) {
+      reviewBlobUrls[image.imageId] = URL.createObjectURL(image.file);
+      img.src = reviewBlobUrls[image.imageId];
+      return;
+    }
+    var loader = image.legacyStoreKey ? getLegacyStoredImage(image.legacyStoreKey) : getStoredImage(image.imageId);
+    loader.then(function (stored) {
+      if (!stored || !stored.blob || !document.body.contains(img)) return;
+      reviewBlobUrls[image.imageId] = URL.createObjectURL(stored.blob);
+      img.src = reviewBlobUrls[image.imageId];
+    });
+  }
+
+  function renderReviewImages(draft) {
+    var list = document.getElementById("reviewImageList");
+    list.textContent = "";
+    document.getElementById("reviewImageCount").textContent = draft.images.length + " / 5枚";
+    if (!draft.images.length) {
+      var empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "表示中のプロンプトで生成した画像を追加してください。別のプロンプトには割り当てられません。";
+      list.appendChild(empty);
+      return;
+    }
+    draft.images.forEach(function (image, imageIndex) {
+      var card = document.createElement("article");
+      card.className = "review-image-card";
+      card.dataset.imageId = image.imageId;
+      var head = document.createElement("div");
+      head.className = "review-image-head";
+      var rank = document.createElement("span");
+      rank.className = "rank-badge";
+      rank.textContent = (imageIndex + 1) + "位";
+      var name = document.createElement("span");
+      name.className = "image-name";
+      name.textContent = image.file ? image.file.name : (image.metadata && image.metadata.name || image.imageId);
+      head.appendChild(rank);
+      head.appendChild(name);
+      var preview = document.createElement("img");
+      preview.className = "review-image-preview";
+      preview.alt = (imageIndex + 1) + "位の生成画像";
+      loadImagePreview(image, preview);
+      var actions = document.createElement("div");
+      actions.className = "image-order-actions";
+      [["up", "順位を上げる"], ["down", "順位を下げる"], ["remove", "削除"]].forEach(function (action) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.dataset.action = action[0];
+        button.dataset.imageId = image.imageId;
+        button.textContent = action[1];
+        if ((action[0] === "up" && imageIndex === 0) || (action[0] === "down" && imageIndex === draft.images.length - 1)) button.disabled = true;
+        actions.appendChild(button);
+      });
+      var detail = document.createElement("details");
+      detail.className = "image-detail";
+      var summary = document.createElement("summary");
+      summary.textContent = "この画像を詳しく評価（任意）";
+      detail.appendChild(summary);
+      [["採否", "verdict", [["accept", "採用可"], ["hold", "保留"], ["reject", "不採用"]], "verdict-grid"],
+       ["美的満足度", "aestheticSatisfaction", [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"]], "rating-grid"],
+       ["意図一致度", "intentMatch", [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"]], "rating-grid"]].forEach(function (group) {
+        var label = document.createElement("div");
+        label.className = "field-label";
+        label.textContent = group[0];
+        detail.appendChild(label);
+        detail.appendChild(makeChoiceGrid(image, group[1], group[2], group[3]));
+      });
+      var failureLabel = document.createElement("div");
+      failureLabel.className = "field-label";
+      failureLabel.textContent = "失敗分類";
+      detail.appendChild(failureLabel);
+      detail.appendChild(makeFailureGrid(image));
+      var noteLabel = document.createElement("label");
+      noteLabel.className = "field-label";
+      noteLabel.textContent = "画像メモ";
+      var note = document.createElement("textarea");
+      note.value = image.notes;
+      note.placeholder = "良かった点、崩れた点、次に変えたいこと";
+      note.addEventListener("input", function () { image.notes = note.value; });
+      detail.appendChild(noteLabel);
+      detail.appendChild(note);
+      card.appendChild(head);
+      card.appendChild(preview);
+      card.appendChild(actions);
+      card.appendChild(detail);
+      list.appendChild(card);
+    });
+  }
+
+  function renderReviewItem() {
+    if (!items.length || !items[index]) return;
+    reviewRenderedIndex = index;
+    var item = items[index];
+    var existing = reviewForItem(item);
+    var draft = draftForItem(item);
+    document.getElementById("reviewGenerationId").textContent = generationId(item);
+    document.getElementById("reviewCurrentPrompt").textContent = item.prompt || "(本文なし)";
+    document.getElementById("reviewCurrentSettings").textContent = item.settings
+      ? JSON.stringify(item.settings, null, 1)
+      : (item.settingsRaw || "(設定なし)");
+    document.getElementById("reviewImages").value = "";
+    document.getElementById("reviewComparisonNotes").value = draft.comparisonNotes;
+    renderReviewImages(draft);
+    renderReviewProgress();
+    renderReviewHistory();
+    setReviewStatus(existing
+      ? "保存済みです。画像・順位・評価を変更して更新できます。"
+      : "表示中の生成IDにだけ画像を登録します。", false);
+  }
+
+  function addImagesToCurrent(files) {
+    if (!items[index]) return;
+    var draft = draftForItem(items[index]);
+    var list = Array.prototype.slice.call(files || []);
+    var room = Math.max(0, 5 - draft.images.length);
+    list.slice(0, room).forEach(function (file) {
+      var imageId = generationId(items[index]) + "-img-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+      var entry = reviewImageEntry(imageMetadata(file, ""), null, "", imageId, "");
+      entry.file = file;
+      draft.images.push(entry);
+    });
+    document.getElementById("reviewImages").value = "";
+    renderReviewImages(draft);
+    setReviewStatus(Math.min(list.length, room) + "枚を " + generationId(items[index]) + " に追加しました。" +
+      (list.length > room ? " 最大5枚を超えた分は追加していません。" : ""), false);
+  }
+
+  function moveOrRemoveImage(imageId, action) {
+    if (!items[index]) return;
+    var draft = draftForItem(items[index]);
+    var current = draft.images.findIndex(function (image) { return image.imageId === imageId; });
+    if (current < 0) return;
+    if (action === "remove") {
+      var removed = draft.images.splice(current, 1)[0];
+      if (!removed.file) draft.removedImageIds.push(removed.imageId);
+      if (reviewBlobUrls[removed.imageId]) URL.revokeObjectURL(reviewBlobUrls[removed.imageId]);
+      delete reviewBlobUrls[removed.imageId];
+    } else {
+      var target = action === "up" ? current - 1 : current + 1;
+      if (target < 0 || target >= draft.images.length) return;
+      var moved = draft.images.splice(current, 1)[0];
+      draft.images.splice(target, 0, moved);
+    }
+    renderReviewImages(draft);
+  }
+
+  function saveCurrentReview(advance) {
+    if (!items.length || !items[index]) return;
+    captureReviewDraft();
+    var item = items[index];
+    var existing = reviewForItem(item);
+    var draft = draftForItem(item);
+    if (!draft.images.length) {
+      setReviewStatus("この生成IDの画像を1枚以上追加してください。", true);
+      return;
+    }
+    setReviewStatus("画像と順位を記録しています…", false);
+    Promise.all(draft.images.map(function (image) {
+      if (!image.file && image.legacyStoreKey) {
+        return getLegacyStoredImage(image.legacyStoreKey).then(function (stored) {
+          if (!stored || !stored.blob) return image.metadata;
+          return putStoredImage(image.imageId, generationId(item), stored.blob,
+            image.metadata && image.metadata.sha256 || "").then(function () { return image.metadata; });
+        });
+      }
+      if (!image.file) return Promise.resolve(image.metadata);
+      return sha256File(image.file).then(function (hash) {
+        image.metadata = imageMetadata(image.file, hash);
+        return putStoredImage(image.imageId, generationId(item), image.file, hash).then(function () { return image.metadata; });
+      });
+    })).then(function () {
+      return Promise.all(draft.removedImageIds.map(deleteStoredImage));
+    }).then(function () {
+      var now = new Date().toISOString();
+      var record = {
+        schemaVersion: "persona-prompt-review.v2",
+        reviewId: existing ? existing.reviewId : "review-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9),
+        createdAt: existing ? existing.createdAt : now,
+        updatedAt: now,
+        generationId: generationId(item),
+        sourceKey: generationId(item),
+        source: {
+          format: "PCEXPORT v1",
+          batchId: batchId,
+          no: item.no,
+          prompt: item.prompt,
+          settings: item.settings,
+          settingsRaw: item.settingsRaw || ""
+        },
+        images: draft.images.map(function (image, imageIndex) {
+          return {
+            imageId: image.imageId,
+            rank: imageIndex + 1,
+            metadata: image.metadata,
+            evaluation: image.evaluation,
+            notes: image.notes
+          };
+        }),
+        comparison: {
+          bestImageId: draft.images[0].imageId,
+          notes: draft.comparisonNotes
+        }
+      };
+      var currentKey = generationId(item);
+      var oldKey = existing && existing.sourceKey;
+      var reviews = readReviews().filter(function (review) {
+        if (!review) return false;
+        return review.generationId !== currentKey && review.sourceKey !== currentKey && (!oldKey || review.sourceKey !== oldKey);
+      });
+      reviews.push(record);
+      writeReviews(reviews);
+      draft.removedImageIds = [];
+      draft.images.forEach(function (image) { image.file = null; });
+      renderReviewProgress();
+      renderReviewHistory();
+      if (advance && index < items.length - 1) {
+        index += 1;
+        saveToStorage();
+        renderCurrent();
+        setReviewStatus("保存しました。次の生成IDです。", false);
+      } else if (advance) {
+        setReviewStatus("保存しました。全件の最後です。", false);
+      } else {
+        renderReviewItem();
+        setReviewStatus("画像・順位・評価を保存しました。", false);
+      }
+    }).catch(function () {
+      setReviewStatus("画像を端末へ保存できませんでした。空き容量を確認してください。", true);
+    });
+  }
   function renderCurrent() {
     if (!items.length) { viewer.style.display = "none"; bottomBar.classList.remove("visible"); renderReviewAvailability(); return; }
     if (index < 0) index = 0;
@@ -959,6 +1422,7 @@
     var it = items[index];
     curNoEl.textContent = String(index + 1);
     totalNoEl.textContent = String(items.length);
+    document.getElementById("extractGenerationId").textContent = generationId(it);
     promptBox.textContent = it.prompt || "(本文なし)";
     if (it.settings) {
       settingsJson.textContent = JSON.stringify(it.settings, null, 1);
@@ -1012,11 +1476,11 @@
     if (!text.trim()) { statusEl.textContent = "貼り付け欄が空です。"; return; }
     try {
       var parsed = parseExport(text);
-      reviewPreviewUrls.forEach(function (url) { if (url) URL.revokeObjectURL(url); });
+      Object.keys(reviewBlobUrls).forEach(function (key) { URL.revokeObjectURL(reviewBlobUrls[key]); });
       items = parsed;
       index = 0;
-      reviewFiles = [];
-      reviewPreviewUrls = [];
+      batchId = "b" + Date.now().toString(36) + "-" + shortHash(text);
+      reviewBlobUrls = {};
       reviewDrafts = {};
       reviewRenderedIndex = -1;
       saveToStorage();
@@ -1051,13 +1515,13 @@
     pasteArea.value = "";
     items = [];
     index = 0;
+    batchId = "";
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* noop */ }
     viewer.style.display = "none";
     bottomBar.classList.remove("visible");
     reviewBottomBar.classList.remove("visible");
-    reviewFiles = [];
-    reviewPreviewUrls.forEach(function (url) { if (url) URL.revokeObjectURL(url); });
-    reviewPreviewUrls = [];
+    Object.keys(reviewBlobUrls).forEach(function (key) { URL.revokeObjectURL(reviewBlobUrls[key]); });
+    reviewBlobUrls = {};
     reviewDrafts = {};
     reviewRenderedIndex = -1;
     renderReviewAvailability();
@@ -1095,6 +1559,15 @@
     });
   });
 
+  copyExtractGenerationIdButton.addEventListener("click", function () {
+    if (!items.length) return;
+    copyText(generationId(items[index])).then(function () {
+      flashButton(copyExtractGenerationIdButton, true);
+    }).catch(function () {
+      flashButton(copyExtractGenerationIdButton, false);
+    });
+  });
+
   extractTab.addEventListener("click", function () { switchView("extract"); });
   reviewTab.addEventListener("click", function () { switchView("review"); });
   openCurrentReviewButton.addEventListener("click", function () { switchView("review"); });
@@ -1103,13 +1576,22 @@
   document.getElementById("reviewBottomPrevButton").addEventListener("click", function () { moveReview(-1); });
   document.getElementById("reviewBottomNextButton").addEventListener("click", function () { moveReview(1); });
   document.getElementById("reviewJumpUnreviewedButton").addEventListener("click", jumpToUnreviewed);
-  document.getElementById("reviewImage").addEventListener("change", function () {
-    var file = this.files && this.files[0];
-    reviewFiles[index] = file || null;
-    showReviewImage(file || null);
-    if (file) setReviewStatus(file.name + " をこのプロンプトへ割り当てました。", false);
+  document.getElementById("reviewImages").addEventListener("change", function () {
+    addImagesToCurrent(this.files);
   });
-  document.getElementById("reviewBatchImages").addEventListener("change", function () { assignBatchImages(this.files); });
+  document.getElementById("reviewImageList").addEventListener("click", function (event) {
+    var button = event.target.closest("button[data-action][data-image-id]");
+    if (!button) return;
+    moveOrRemoveImage(button.dataset.imageId, button.dataset.action);
+  });
+  document.getElementById("copyGenerationIdButton").addEventListener("click", function () {
+    if (!items[index]) return;
+    copyText(generationId(items[index])).then(function () {
+      flashButton(document.getElementById("copyGenerationIdButton"), true);
+    }).catch(function () {
+      flashButton(document.getElementById("copyGenerationIdButton"), false);
+    });
+  });
   document.getElementById("reviewBottomSaveButton").addEventListener("click", function () { saveCurrentReview(true); });
   document.getElementById("saveReviewOnlyButton").addEventListener("click", function () { saveCurrentReview(false); });
   document.getElementById("exportReviewsButton").addEventListener("click", exportReviews);
@@ -1120,9 +1602,8 @@
     localStorage.removeItem(REVIEW_STORAGE_KEY);
     clearStoredImages().then(function () {
       reviewDrafts = {};
-      reviewFiles = [];
-      reviewPreviewUrls.forEach(function (url) { if (url) URL.revokeObjectURL(url); });
-      reviewPreviewUrls = [];
+      Object.keys(reviewBlobUrls).forEach(function (key) { URL.revokeObjectURL(reviewBlobUrls[key]); });
+      reviewBlobUrls = {};
       renderReviewProgress();
       renderReviewItem();
       renderReviewHistory();
@@ -1147,7 +1628,6 @@
     }, { passive: true });
   })();
 
-  buildFailureOptions();
   renderReviewHistory();
   if (loadFromStorage()) {
     renderCurrent();
