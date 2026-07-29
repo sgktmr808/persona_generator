@@ -373,9 +373,10 @@
         <label class="field-label" for="reviewImages">この生成IDの画像（最大5枚）</label>
         <input id="reviewImages" type="file" accept="image/*" multiple />
         <div id="reviewImageCount" class="image-count">0 / 5枚</div>
+        <div class="image-count">順位は登録画像内の相対比較です。1枚だけの「1位」も採用を意味しません。</div>
         <div id="reviewImageList" class="review-image-list"></div>
 
-        <label class="field-label" for="reviewComparisonNotes">1位を選んだ理由・比較メモ（任意）</label>
+        <label class="field-label" for="reviewComparisonNotes">順位の理由・比較メモ（任意）</label>
         <textarea id="reviewComparisonNotes" class="comparison-note" placeholder="例：顔の雰囲気と光が最も意図に近い"></textarea>
 
         <div class="row">
@@ -421,6 +422,8 @@
   var REVIEW_IMAGE_DB = "personaGeneratorReviewImages";
   var REVIEW_IMAGE_STORE = "reviewImagesV2";
   var LEGACY_IMAGE_STORE = "images";
+  var REVIEW_SCHEMA_VERSION = "persona-prompt-review.v3";
+  var REVIEW_POLICY_VERSION = "persona-review-policy.v1";
 
   var pasteArea = document.getElementById("pasteArea");
   var parseButton = document.getElementById("parseButton");
@@ -1124,7 +1127,7 @@
       title.textContent = (review.generationId || review.sourceKey) + " · " + imageCount + "枚";
       var details = document.createElement("div");
       if (Array.isArray(review.images) && review.images[0]) {
-        details.textContent = "1位: " + (review.images[0].metadata && review.images[0].metadata.name || review.images[0].imageId);
+        details.textContent = "相対1位: " + (review.images[0].metadata && review.images[0].metadata.name || review.images[0].imageId);
       } else {
         details.textContent = "旧形式のレビュー記録";
       }
@@ -1331,6 +1334,24 @@
     renderReviewImages(draft);
   }
 
+  function serializeEvaluation(image) {
+    var evaluation = image.evaluation || {};
+    var collectedFields = [];
+    if (evaluation.verdict) collectedFields.push("verdict");
+    if (evaluation.aestheticSatisfaction) collectedFields.push("aestheticSatisfaction");
+    if (evaluation.intentMatch) collectedFields.push("intentMatch");
+    if (Array.isArray(evaluation.failures) && evaluation.failures.length) collectedFields.push("failures");
+    if (image.notes && image.notes.trim()) collectedFields.push("notes");
+    return {
+      policyVersion: REVIEW_POLICY_VERSION,
+      collectedFields: collectedFields,
+      verdict: evaluation.verdict || null,
+      aestheticSatisfaction: evaluation.aestheticSatisfaction ? Number(evaluation.aestheticSatisfaction) : null,
+      intentMatch: evaluation.intentMatch ? Number(evaluation.intentMatch) : null,
+      failures: Array.isArray(evaluation.failures) && evaluation.failures.length ? evaluation.failures.slice() : null
+    };
+  }
+
   function saveCurrentReview(advance) {
     if (!items.length || !items[index]) return;
     captureReviewDraft();
@@ -1360,7 +1381,14 @@
     }).then(function () {
       var now = new Date().toISOString();
       var record = {
-        schemaVersion: "persona-prompt-review.v2",
+        schemaVersion: REVIEW_SCHEMA_VERSION,
+        reviewPolicy: {
+          version: REVIEW_POLICY_VERSION,
+          rankingMeaning: "relative_preference_within_registered_images",
+          rankImpliesAdoption: false,
+          requiredFieldIds: ["images", "images.rank"],
+          optionalFieldIds: ["verdict", "aestheticSatisfaction", "intentMatch", "failures", "notes", "comparison.notes"]
+        },
         reviewId: existing ? existing.reviewId : "review-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9),
         createdAt: existing ? existing.createdAt : now,
         updatedAt: now,
@@ -1379,13 +1407,16 @@
             imageId: image.imageId,
             rank: imageIndex + 1,
             metadata: image.metadata,
-            evaluation: image.evaluation,
-            notes: image.notes
+            evaluation: serializeEvaluation(image),
+            notes: image.notes && image.notes.trim() ? image.notes : null
           };
         }),
         comparison: {
-          bestImageId: draft.images[0].imageId,
-          notes: draft.comparisonNotes
+          topRankedImageId: draft.images[0].imageId,
+          rankingMeaning: "relative_preference_only",
+          rankImpliesAdoption: false,
+          collectedFields: draft.comparisonNotes && draft.comparisonNotes.trim() ? ["notes"] : [],
+          notes: draft.comparisonNotes && draft.comparisonNotes.trim() ? draft.comparisonNotes : null
         }
       };
       var currentKey = generationId(item);
