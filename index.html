@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Persona Generator — 取り出しツール</title>
-<meta name="description" content="生成プロンプト+設定をまとめて貼り付け、1件ずつ本文と設定を取り出せるiPhone向けコピペツール" />
+<title>Persona Generator — 取り出し・画像レビュー</title>
+<meta name="description" content="生成プロンプト+設定を1件ずつ取り出し、生成画像をA/BレビューできるiPhone向けツール" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Persona Gen" />
@@ -183,6 +183,102 @@
     padding-top: 14px;
     border-top: 1px solid var(--border);
   }
+  [hidden] { display: none !important; }
+  .app-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin: 14px 0 16px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(18,10,16,0.72);
+  }
+  .app-tab {
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--text-dim);
+  }
+  .app-tab[aria-selected="true"] {
+    background: var(--accent-grad);
+    color: #fff;
+    font-weight: 700;
+  }
+  .section-title { margin: 0 0 4px; font-size: 18px; }
+  .section-lead { margin: 0 0 14px; color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+  .field-label { display: block; margin: 10px 0 6px; color: var(--text-dim); font-size: 13px; }
+  select, input[type="text"] {
+    width: 100%;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #0a0609;
+    color: var(--text);
+    padding: 10px;
+    font-size: 16px;
+  }
+  input[type="file"] { max-width: 100%; color: var(--text-dim); font-size: 13px; }
+  .pair-selects, .review-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .review-card {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(5,3,8,0.54);
+  }
+  .review-card h3 { margin: 0 0 8px; font-size: 15px; color: var(--accent-2); }
+  .review-prompt {
+    max-height: 132px;
+    overflow: auto;
+    padding: 10px;
+    border-radius: 9px;
+    background: #080407;
+    color: var(--text-dim);
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .review-preview {
+    display: none;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    margin-top: 10px;
+    border-radius: 10px;
+    background: #080407;
+    object-fit: contain;
+  }
+  .review-preview.visible { display: block; }
+  .failure-grid { display: grid; gap: 6px; margin-top: 8px; }
+  .failure-option { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-dim); }
+  .failure-option input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .preference-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .preference-option input { position: absolute; opacity: 0; pointer-events: none; }
+  .preference-option span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+  .preference-option input:checked + span { border-color: var(--accent-2); background: rgba(208,168,92,0.15); color: var(--text); }
+  .review-status { min-height: 20px; margin-top: 10px; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+  .review-status.error { color: var(--danger); }
+  .review-history { display: grid; gap: 8px; margin-top: 10px; }
+  .history-item { padding: 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; line-height: 1.55; }
+  .history-item strong { color: var(--accent-2); }
+  .empty-state { padding: 18px 14px; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+  .viewer-review-actions { margin-bottom: 14px; }
+  @media (max-width: 560px) {
+    .review-pair { grid-template-columns: 1fr; }
+    .pair-selects { grid-template-columns: 1fr; }
+    .preference-grid { grid-template-columns: 1fr 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -192,6 +288,12 @@
     生成アプリ側の「全件+設定をコピー」でコピーした内容をここに貼り付けると、1件ずつ本文と設定値を取り出せます。
   </p>
 
+  <nav class="app-tabs" role="tablist" aria-label="機能を切り替え">
+    <button id="extractTab" class="app-tab" type="button" role="tab" aria-selected="true" aria-controls="extractView">取り出す</button>
+    <button id="reviewTab" class="app-tab" type="button" role="tab" aria-selected="false" aria-controls="reviewView">画像レビュー</button>
+  </nav>
+
+  <section id="extractView" role="tabpanel" aria-labelledby="extractTab">
   <div class="card">
     <textarea id="pasteArea" placeholder="ここに貼り付け(&lt;&lt;&lt;PCEXPORT v1 count=... で始まるテキスト)"></textarea>
     <div class="row">
@@ -220,10 +322,125 @@
       <summary>設定値(JSON)を見る</summary>
       <pre id="settingsJson" class="settings-json"></pre>
     </details>
+    <div class="row viewer-review-actions">
+      <button id="setReviewAButton" class="grow" type="button">この候補をAにする</button>
+      <button id="setReviewBButton" class="grow" type="button">この候補をBにする</button>
+    </div>
   </div>
+  </section>
+
+  <section id="reviewView" role="tabpanel" aria-labelledby="reviewTab" hidden>
+    <h2 class="section-title">画像レビュー</h2>
+    <p class="section-lead">取り込んだ2候補の画像を並べ、美しさと狙いへの一致をあなた自身で記録します。</p>
+
+    <div id="reviewEmpty" class="card empty-state">
+      先に「取り出す」でプロンプト＋設定を読み込んでください。
+    </div>
+
+    <div id="reviewContent" hidden>
+      <div class="card">
+        <div class="pair-selects">
+          <div>
+            <label class="field-label" for="reviewSelectA">候補A</label>
+            <select id="reviewSelectA"></select>
+          </div>
+          <div>
+            <label class="field-label" for="reviewSelectB">候補B</label>
+            <select id="reviewSelectB"></select>
+          </div>
+        </div>
+        <div class="row">
+          <button id="startReviewButton" class="primary grow" type="button">この2案を見比べる</button>
+        </div>
+      </div>
+
+      <div id="reviewWorkspace" hidden>
+        <div class="review-pair">
+          <article class="review-card">
+            <h3 id="reviewTitleA">A</h3>
+            <div id="reviewPromptA" class="review-prompt"></div>
+            <label class="field-label" for="reviewImageA">生成画像</label>
+            <input id="reviewImageA" type="file" accept="image/*" />
+            <img id="reviewPreviewA" class="review-preview" alt="候補Aのプレビュー" />
+            <label class="field-label" for="reviewVerdictA">採否</label>
+            <select id="reviewVerdictA">
+              <option value="">選択してください</option>
+              <option value="accept">採用</option>
+              <option value="hold">保留</option>
+              <option value="reject">不採用</option>
+            </select>
+            <label class="field-label" for="reviewAestheticA">美的満足度</label>
+            <select id="reviewAestheticA">
+              <option value="">選択してください</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <label class="field-label" for="reviewIntentA">意図一致度</label>
+            <select id="reviewIntentA">
+              <option value="">選択してください</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <div class="field-label">気づいた失敗（任意）</div>
+            <div id="reviewFailuresA" class="failure-grid"></div>
+          </article>
+
+          <article class="review-card">
+            <h3 id="reviewTitleB">B</h3>
+            <div id="reviewPromptB" class="review-prompt"></div>
+            <label class="field-label" for="reviewImageB">生成画像</label>
+            <input id="reviewImageB" type="file" accept="image/*" />
+            <img id="reviewPreviewB" class="review-preview" alt="候補Bのプレビュー" />
+            <label class="field-label" for="reviewVerdictB">採否</label>
+            <select id="reviewVerdictB">
+              <option value="">選択してください</option>
+              <option value="accept">採用</option>
+              <option value="hold">保留</option>
+              <option value="reject">不採用</option>
+            </select>
+            <label class="field-label" for="reviewAestheticB">美的満足度</label>
+            <select id="reviewAestheticB">
+              <option value="">選択してください</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <label class="field-label" for="reviewIntentB">意図一致度</label>
+            <select id="reviewIntentB">
+              <option value="">選択してください</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <div class="field-label">気づいた失敗（任意）</div>
+            <div id="reviewFailuresB" class="failure-grid"></div>
+          </article>
+        </div>
+
+        <div class="card">
+          <div class="field-label">見比べた結果</div>
+          <div class="preference-grid">
+            <label class="preference-option"><input type="radio" name="reviewPreference" value="a" /><span>Aが良い</span></label>
+            <label class="preference-option"><input type="radio" name="reviewPreference" value="b" /><span>Bが良い</span></label>
+            <label class="preference-option"><input type="radio" name="reviewPreference" value="tie" /><span>同程度</span></label>
+            <label class="preference-option"><input type="radio" name="reviewPreference" value="undecided" /><span>判断保留</span></label>
+          </div>
+          <label class="field-label" for="reviewNotes">気づいたこと（任意）</label>
+          <textarea id="reviewNotes" placeholder="良かった点、崩れた点、次に変えたいこと"></textarea>
+          <div class="row">
+            <button id="saveReviewButton" class="primary grow" type="button">この比較を記録</button>
+          </div>
+          <div id="reviewStatus" class="review-status" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="section-title">記録</h3>
+        <div class="row">
+          <button id="exportReviewsButton" class="grow" type="button">JSONLを書き出す</button>
+          <button id="clearReviewsButton" type="button">記録を削除</button>
+        </div>
+        <div id="reviewHistory" class="review-history"></div>
+      </div>
+    </div>
+  </section>
 
   <p class="privacy">
-    このページはサーバーを持たない静的サイトです。貼り付けた内容はこの端末のブラウザ内(localStorage)にのみ保存され、どこにも送信されません。共有リンクや同期機能はありません。
+    このページはサーバーを持たない静的サイトです。貼り付けた内容とレビュー記録はこの端末のブラウザ内(localStorage)にのみ保存され、どこにも送信されません。画像は一時表示だけで保存しません。共有リンクや同期機能はありません。
   </p>
 </div>
 
@@ -238,6 +455,7 @@
 (function () {
   "use strict";
   var STORAGE_KEY = "personaGenerator.lastBatch.v1";
+  var REVIEW_STORAGE_KEY = "personaGenerator.imageReviews.v1";
 
   var pasteArea = document.getElementById("pasteArea");
   var parseButton = document.getElementById("parseButton");
@@ -257,9 +475,31 @@
   var copySettingsButton = document.getElementById("copySettingsButton");
   var jumpInput = document.getElementById("jumpInput");
   var jumpButton = document.getElementById("jumpButton");
+  var extractTab = document.getElementById("extractTab");
+  var reviewTab = document.getElementById("reviewTab");
+  var extractView = document.getElementById("extractView");
+  var reviewView = document.getElementById("reviewView");
+  var reviewEmpty = document.getElementById("reviewEmpty");
+  var reviewContent = document.getElementById("reviewContent");
+  var reviewSelectA = document.getElementById("reviewSelectA");
+  var reviewSelectB = document.getElementById("reviewSelectB");
+  var reviewWorkspace = document.getElementById("reviewWorkspace");
+  var reviewStatus = document.getElementById("reviewStatus");
+  var reviewHistory = document.getElementById("reviewHistory");
+  var setReviewAButton = document.getElementById("setReviewAButton");
+  var setReviewBButton = document.getElementById("setReviewBButton");
 
   var items = [];
   var index = 0;
+  var activeView = "extract";
+  var activePair = null;
+  var reviewFiles = { a: null, b: null };
+  var previewUrls = { a: "", b: "" };
+  var failureTypes = [
+    ["composition", "構図"], ["hair", "髪"], ["makeup", "メイク"],
+    ["clothing", "衣装"], ["lighting", "光"], ["background", "背景"],
+    ["motion", "動き"], ["anatomy", "身体"], ["other", "その他"]
+  ];
 
   // app_static の「全件+設定をコピー」形式(<<<PROMPT NN>>> / <<<SETTINGS NN>>> / <<<PCEXPORT END>>>)を
   // 解析する。マーカーはあえて日本語の生成文にまず出現しない記号列にしてあるので、単純な位置分割で
@@ -317,8 +557,272 @@
     } catch (_) { return false; }
   }
 
+  function switchView(name) {
+    activeView = name === "review" ? "review" : "extract";
+    var reviewing = activeView === "review";
+    extractTab.setAttribute("aria-selected", reviewing ? "false" : "true");
+    reviewTab.setAttribute("aria-selected", reviewing ? "true" : "false");
+    extractView.hidden = reviewing;
+    reviewView.hidden = !reviewing;
+    bottomBar.classList.toggle("visible", !reviewing && items.length > 0);
+    if (reviewing) {
+      renderReviewAvailability();
+      renderReviewHistory();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  function itemLabel(item, fallbackIndex) {
+    var firstLine = String(item.prompt || "").split(/\r?\n/)[0].trim();
+    if (firstLine.length > 28) firstLine = firstLine.slice(0, 28) + "…";
+    return String(item.no || fallbackIndex + 1) + "件目" + (firstLine ? " — " + firstLine : "");
+  }
+
+  function fillReviewSelect(select, previous) {
+    select.textContent = "";
+    items.forEach(function (item, i) {
+      var option = document.createElement("option");
+      option.value = String(i);
+      option.textContent = itemLabel(item, i);
+      select.appendChild(option);
+    });
+    if (previous !== "" && Number(previous) < items.length) select.value = previous;
+  }
+
+  function renderReviewAvailability() {
+    var hasItems = items.length > 0;
+    reviewEmpty.hidden = hasItems;
+    reviewContent.hidden = !hasItems;
+    if (!hasItems) {
+      reviewWorkspace.hidden = true;
+      activePair = null;
+      return;
+    }
+    var prevA = reviewSelectA.value;
+    var prevB = reviewSelectB.value;
+    fillReviewSelect(reviewSelectA, prevA);
+    fillReviewSelect(reviewSelectB, prevB);
+    if (!prevA) reviewSelectA.value = "0";
+    if (!prevB) reviewSelectB.value = String(items.length > 1 ? 1 : 0);
+  }
+
+  function buildFailureOptions(containerId, side) {
+    var container = document.getElementById(containerId);
+    container.textContent = "";
+    failureTypes.forEach(function (entry) {
+      var label = document.createElement("label");
+      label.className = "failure-option";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.name = "reviewFailure" + side.toUpperCase();
+      input.value = entry[0];
+      var text = document.createElement("span");
+      text.textContent = entry[1];
+      label.appendChild(input);
+      label.appendChild(text);
+      container.appendChild(label);
+    });
+  }
+
+  function resetReviewInputs() {
+    ["A", "B"].forEach(function (side) {
+      document.getElementById("reviewVerdict" + side).value = "";
+      document.getElementById("reviewAesthetic" + side).value = "";
+      document.getElementById("reviewIntent" + side).value = "";
+      document.querySelectorAll("input[name=reviewFailure" + side + "]").forEach(function (el) { el.checked = false; });
+      document.getElementById("reviewImage" + side).value = "";
+      showImagePreview(side, null);
+    });
+    document.querySelectorAll("input[name=reviewPreference]").forEach(function (el) { el.checked = false; });
+    document.getElementById("reviewNotes").value = "";
+    reviewStatus.textContent = "";
+    reviewStatus.classList.remove("error");
+  }
+
+  function startReview() {
+    if (!items.length) return;
+    var aIndex = Number(reviewSelectA.value);
+    var bIndex = Number(reviewSelectB.value);
+    if (!Number.isInteger(aIndex) || !Number.isInteger(bIndex) || !items[aIndex] || !items[bIndex]) {
+      setReviewStatus("比較する2案を選んでください。", true);
+      return;
+    }
+    if (aIndex === bIndex) {
+      setReviewStatus("AとBには別の候補を選んでください。", true);
+      return;
+    }
+    activePair = { aIndex: aIndex, bIndex: bIndex };
+    document.getElementById("reviewTitleA").textContent = "A · " + itemLabel(items[aIndex], aIndex);
+    document.getElementById("reviewTitleB").textContent = "B · " + itemLabel(items[bIndex], bIndex);
+    document.getElementById("reviewPromptA").textContent = items[aIndex].prompt || "(本文なし)";
+    document.getElementById("reviewPromptB").textContent = items[bIndex].prompt || "(本文なし)";
+    resetReviewInputs();
+    reviewWorkspace.hidden = false;
+    reviewWorkspace.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function setReviewStatus(message, isError) {
+    reviewStatus.textContent = message;
+    reviewStatus.classList.toggle("error", !!isError);
+  }
+
+  function setReviewCandidate(side, itemIndex) {
+    switchView("review");
+    renderReviewAvailability();
+    var target = side === "b" ? reviewSelectB : reviewSelectA;
+    target.value = String(itemIndex);
+    if (reviewSelectA.value === reviewSelectB.value && items.length > 1) {
+      var other = itemIndex === 0 ? 1 : 0;
+      (side === "b" ? reviewSelectA : reviewSelectB).value = String(other);
+    }
+    setReviewStatus((side === "b" ? "B" : "A") + "に" + itemLabel(items[itemIndex], itemIndex) + "を設定しました。", false);
+  }
+
+  function showImagePreview(side, file) {
+    var key = side.toLowerCase();
+    var preview = document.getElementById("reviewPreview" + side);
+    if (previewUrls[key]) URL.revokeObjectURL(previewUrls[key]);
+    previewUrls[key] = "";
+    reviewFiles[key] = file || null;
+    if (!file) {
+      preview.removeAttribute("src");
+      preview.classList.remove("visible");
+      return;
+    }
+    previewUrls[key] = URL.createObjectURL(file);
+    preview.src = previewUrls[key];
+    preview.classList.add("visible");
+  }
+
+  function readReviews() {
+    try {
+      var parsed = JSON.parse(localStorage.getItem(REVIEW_STORAGE_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) { return []; }
+  }
+
+  function writeReviews(reviews) {
+    localStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify(reviews.slice(-500)));
+  }
+
+  function selectedFailures(side) {
+    return Array.prototype.slice.call(document.querySelectorAll("input[name=reviewFailure" + side + "]:checked"))
+      .map(function (el) { return el.value; });
+  }
+
+  function selectedPreference() {
+    var checked = document.querySelector("input[name=reviewPreference]:checked");
+    return checked ? checked.value : "";
+  }
+
+  function sha256File(file) {
+    if (!file || !window.crypto || !crypto.subtle || !file.arrayBuffer) return Promise.resolve("");
+    return file.arrayBuffer().then(function (data) { return crypto.subtle.digest("SHA-256", data); }).then(function (digest) {
+      return Array.prototype.map.call(new Uint8Array(digest), function (n) { return n.toString(16).padStart(2, "0"); }).join("");
+    }).catch(function () { return ""; });
+  }
+
+  function imageMetadata(file, hash) {
+    return file ? { name: file.name, type: file.type, size: file.size, lastModified: file.lastModified, sha256: hash || "" } : null;
+  }
+
+  function reviewValues(side) {
+    return {
+      verdict: document.getElementById("reviewVerdict" + side).value,
+      aestheticSatisfaction: document.getElementById("reviewAesthetic" + side).value,
+      intentMatch: document.getElementById("reviewIntent" + side).value,
+      failures: selectedFailures(side)
+    };
+  }
+
+  function renderReviewHistory() {
+    var reviews = readReviews();
+    reviewHistory.textContent = "";
+    if (!reviews.length) {
+      var empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "まだレビュー記録はありません。";
+      reviewHistory.appendChild(empty);
+      return;
+    }
+    var preferenceLabels = { a: "Aが良い", b: "Bが良い", tie: "同程度", undecided: "判断保留" };
+    reviews.slice().reverse().slice(0, 20).forEach(function (review) {
+      var row = document.createElement("div");
+      row.className = "history-item";
+      var title = document.createElement("strong");
+      title.textContent = preferenceLabels[review.preference] || review.preference;
+      var details = document.createElement("div");
+      details.textContent = "A " + review.source.a.no + "件目: 美的" + review.evaluation.a.aestheticSatisfaction + " / 意図" + review.evaluation.a.intentMatch +
+        "　B " + review.source.b.no + "件目: 美的" + review.evaluation.b.aestheticSatisfaction + " / 意図" + review.evaluation.b.intentMatch;
+      var date = document.createElement("div");
+      date.textContent = new Date(review.createdAt).toLocaleString("ja-JP");
+      date.style.color = "var(--text-dim)";
+      row.appendChild(title);
+      row.appendChild(details);
+      row.appendChild(date);
+      reviewHistory.appendChild(row);
+    });
+  }
+
+  function saveCurrentReview() {
+    if (!activePair) { setReviewStatus("先に比較する2案を開いてください。", true); return; }
+    var a = reviewValues("A");
+    var b = reviewValues("B");
+    var preference = selectedPreference();
+    if (!reviewFiles.a || !reviewFiles.b) { setReviewStatus("AとBの画像を両方選んでください。", true); return; }
+    if (!a.verdict || !a.aestheticSatisfaction || !a.intentMatch || !b.verdict || !b.aestheticSatisfaction || !b.intentMatch) {
+      setReviewStatus("AとBそれぞれの採否・美的満足度・意図一致度を選んでください。", true);
+      return;
+    }
+    if (!preference) { setReviewStatus("見比べた結果を選んでください。", true); return; }
+    setReviewStatus("画像を照合して記録しています…", false);
+    Promise.all([sha256File(reviewFiles.a), sha256File(reviewFiles.b)]).then(function (hashes) {
+      var itemA = items[activePair.aIndex];
+      var itemB = items[activePair.bIndex];
+      var record = {
+        schemaVersion: "persona-image-review.v1",
+        reviewId: "review-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9),
+        createdAt: new Date().toISOString(),
+        source: {
+          format: "PCEXPORT v1",
+          a: { no: itemA.no, prompt: itemA.prompt, settings: itemA.settings, settingsRaw: itemA.settingsRaw || "" },
+          b: { no: itemB.no, prompt: itemB.prompt, settings: itemB.settings, settingsRaw: itemB.settingsRaw || "" }
+        },
+        images: { a: imageMetadata(reviewFiles.a, hashes[0]), b: imageMetadata(reviewFiles.b, hashes[1]) },
+        evaluation: { a: a, b: b },
+        preference: preference,
+        notes: document.getElementById("reviewNotes").value
+      };
+      var reviews = readReviews();
+      reviews.push(record);
+      try {
+        writeReviews(reviews);
+        setReviewStatus("比較を記録しました。", false);
+        renderReviewHistory();
+      } catch (_) {
+        setReviewStatus("端末の保存容量が不足しているため記録できませんでした。", true);
+      }
+    });
+  }
+
+  function exportReviews() {
+    var reviews = readReviews();
+    if (!reviews.length) { setReviewStatus("書き出すレビュー記録がありません。", true); return; }
+    var jsonl = reviews.map(function (review) { return JSON.stringify(review); }).join("\n") + "\n";
+    var blob = new Blob([jsonl], { type: "application/x-ndjson;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "persona-image-reviews-" + new Date().toISOString().slice(0, 10) + ".jsonl";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+    setReviewStatus(reviews.length + "件のレビューをJSONLで書き出しました。", false);
+  }
+
   function renderCurrent() {
-    if (!items.length) { viewer.style.display = "none"; bottomBar.classList.remove("visible"); return; }
+    if (!items.length) { viewer.style.display = "none"; bottomBar.classList.remove("visible"); renderReviewAvailability(); return; }
     if (index < 0) index = 0;
     if (index > items.length - 1) index = items.length - 1;
     var it = items[index];
@@ -333,9 +837,10 @@
       settingsJson.textContent = "(このプロンプトには設定データが含まれていません)";
     }
     viewer.style.display = "block";
-    bottomBar.classList.add("visible");
+    bottomBar.classList.toggle("visible", activeView === "extract");
     jumpInput.value = String(index + 1);
     jumpInput.max = String(items.length);
+    renderReviewAvailability();
   }
 
   function flashButton(btn, ok) {
@@ -413,6 +918,9 @@
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* noop */ }
     viewer.style.display = "none";
     bottomBar.classList.remove("visible");
+    reviewWorkspace.hidden = true;
+    activePair = null;
+    renderReviewAvailability();
     statusEl.textContent = "クリアしました。";
   });
 
@@ -447,6 +955,24 @@
     });
   });
 
+  extractTab.addEventListener("click", function () { switchView("extract"); });
+  reviewTab.addEventListener("click", function () { switchView("review"); });
+  setReviewAButton.addEventListener("click", function () { setReviewCandidate("a", index); });
+  setReviewBButton.addEventListener("click", function () { setReviewCandidate("b", index); });
+  document.getElementById("startReviewButton").addEventListener("click", startReview);
+  document.getElementById("reviewImageA").addEventListener("change", function () { showImagePreview("A", this.files && this.files[0]); });
+  document.getElementById("reviewImageB").addEventListener("change", function () { showImagePreview("B", this.files && this.files[0]); });
+  document.getElementById("saveReviewButton").addEventListener("click", saveCurrentReview);
+  document.getElementById("exportReviewsButton").addEventListener("click", exportReviews);
+  document.getElementById("clearReviewsButton").addEventListener("click", function () {
+    var count = readReviews().length;
+    if (!count) { setReviewStatus("削除するレビュー記録がありません。", true); return; }
+    if (!confirm("保存済みのレビュー記録 " + count + "件を削除します。元に戻せません。")) return;
+    localStorage.removeItem(REVIEW_STORAGE_KEY);
+    renderReviewHistory();
+    setReviewStatus("レビュー記録を削除しました。", false);
+  });
+
   // スワイプで前後移動(iPhoneでの片手操作向け)
   (function () {
     var startX = null, startY = null;
@@ -464,9 +990,14 @@
     }, { passive: true });
   })();
 
+  buildFailureOptions("reviewFailuresA", "a");
+  buildFailureOptions("reviewFailuresB", "b");
+  renderReviewHistory();
   if (loadFromStorage()) {
     renderCurrent();
     statusEl.textContent = "前回の続き(" + items.length + "件)を復元しました。";
+  } else {
+    renderReviewAvailability();
   }
 })();
 </script>
