@@ -183,10 +183,28 @@
     padding-top: 14px;
     border-top: 1px solid var(--border);
   }
+  /* === [R3-FB] A/B実験パッケージ(レイアウトのみ) === */
+  .ab-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .ab-thumb {
+    width: 68px; height: 68px; object-fit: cover;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-elevated); cursor: pointer;
+  }
+  .ab-thumb[data-ab-selected="true"] { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+  .ab-list { margin: 6px 0; padding-left: 1.1em; word-break: break-word; }
+  .ab-dead { opacity: .45; text-decoration: line-through; }
+  .ab-sidebyside { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+  .ab-side { margin: 0; min-width: 0; }
+  .ab-zoom {
+    width: 100%; height: auto; max-height: 44vh; object-fit: contain;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .ab-caution { margin-top: 8px; }
+  /* === R3-FB END === */
   [hidden] { display: none !important; }
   .app-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 6px;
     margin: 14px 0 16px;
     padding: 4px;
@@ -296,6 +314,7 @@
   <nav class="app-tabs" role="tablist" aria-label="機能を切り替え">
     <button id="extractTab" class="app-tab" type="button" role="tab" aria-selected="true" aria-controls="extractView">取り出す</button>
     <button id="reviewTab" class="app-tab" type="button" role="tab" aria-selected="false" aria-controls="reviewView">画像レビュー</button>
+    <button id="abTab" class="app-tab" type="button" role="tab" aria-selected="false" aria-controls="abView">A/B実験</button>
   </nav>
 
   <section id="extractView" role="tabpanel" aria-labelledby="extractTab">
@@ -396,6 +415,133 @@
     </div>
   </section>
 
+  <section id="abView" role="tabpanel" aria-labelledby="abTab" hidden>
+    <div class="card">
+      <div class="section-title">A/B実験パッケージ</div>
+      <p class="section-lead">実験パッケージ（persona-experiment-package.v1）をこの端末で開きます。中身はブラウザ内にだけ保存され、どこにも送信されません。</p>
+      <div class="row">
+        <button id="abOpenButton" class="grow" type="button">パッケージを読み込む</button>
+        <input id="abFileInput" type="file" accept=".json,application/json" style="display:none;" />
+      </div>
+      <div id="abPackageStatus" class="review-status"></div>
+    </div>
+
+    <div id="abContent" hidden>
+      <div class="card">
+        <div class="row">
+          <button id="abPrevCase" type="button">◀ 前</button>
+          <select id="abCaseSelect" class="grow" aria-label="比較対象"></select>
+          <button id="abNextCase" type="button">次 ▶</button>
+        </div>
+        <div id="abProgress" class="sub"></div>
+        <div id="abCaseNote" class="sub"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">画像生成条件</div>
+        <p class="section-lead">A/Bで共有します。画像を登録する前に記録してください。</p>
+        <label class="field-label" for="abProvider">provider</label>
+        <input id="abProvider" type="text" placeholder="例: openai" />
+        <label class="field-label" for="abModel">model</label>
+        <input id="abModel" type="text" placeholder="例: gpt-image-1" />
+        <label class="field-label" for="abSeedSupport">Seed</label>
+        <select id="abSeedSupport" aria-label="Seed対応">
+          <option value="">（選んでください）</option>
+          <option value="supported">Seed対応（値を記録）</option>
+          <option value="unsupported">Seed非対応</option>
+        </select>
+        <input id="abSeed" type="text" placeholder="Seed値" aria-label="Seed値" />
+        <div class="row">
+          <button id="abSaveCondition" class="grow primary" type="button" disabled>生成条件を記録</button>
+        </div>
+        <div id="abConditionState" class="sub"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">A：元プロンプト</div>
+        <textarea id="abPromptA" rows="6" readonly aria-label="A の本文"></textarea>
+        <div class="row">
+          <button id="abCopyA" class="grow" type="button">A をコピー</button>
+          <button id="abCopySettingsA" class="grow" type="button">設定をコピー</button>
+        </div>
+        <label class="field-label" for="abFileA">A の画像を登録（最大5枚）</label>
+        <input id="abFileA" type="file" accept="image/*" />
+        <div class="row"><button id="abAddA" class="grow primary" type="button" disabled>A に画像を登録</button></div>
+        <div id="abThumbsA" class="ab-thumbs"></div>
+        <ul id="abListA" class="sub ab-list"></ul>
+      </div>
+
+      <div class="card">
+        <div class="section-title">B：顔融合文を追加</div>
+        <textarea id="abPromptB" rows="6" readonly aria-label="B の本文"></textarea>
+        <div class="row">
+          <button id="abCopyB" class="grow" type="button">B をコピー</button>
+          <button id="abCopySettingsB" class="grow" type="button">設定をコピー</button>
+        </div>
+        <div id="abInsertInfo" class="sub"></div>
+        <label class="field-label" for="abFileB">B の画像を登録（最大5枚）</label>
+        <input id="abFileB" type="file" accept="image/*" />
+        <div class="row"><button id="abAddB" class="grow primary" type="button" disabled>B に画像を登録</button></div>
+        <div id="abThumbsB" class="ab-thumbs"></div>
+        <ul id="abListB" class="sub ab-list"></ul>
+      </div>
+
+      <div class="card">
+        <div class="section-title">画像の評価</div>
+        <label class="field-label" for="abReviewTarget">評価する画像</label>
+        <select id="abReviewTarget" aria-label="評価する画像"></select>
+        <div id="abReviewForm"></div>
+        <div class="row">
+          <button id="abSaveReview" class="grow primary" type="button" disabled>評価を保存</button>
+          <button id="abInvalidate" class="grow" type="button" disabled>この画像を無効化</button>
+        </div>
+        <div id="abReviewState" class="sub"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">A と B の比較</div>
+        <label class="field-label" for="abCompareA">比較する A の画像</label>
+        <select id="abCompareA" aria-label="比較する A の画像"></select>
+        <label class="field-label" for="abCompareB">比較する B の画像</label>
+        <select id="abCompareB" aria-label="比較する B の画像"></select>
+        <div class="ab-sidebyside">
+          <figure class="ab-side">
+            <img id="abZoomA" class="ab-zoom" alt="" hidden />
+            <figcaption id="abZoomCaptionA" class="sub"></figcaption>
+          </figure>
+          <figure class="ab-side">
+            <img id="abZoomB" class="ab-zoom" alt="" hidden />
+            <figcaption id="abZoomCaptionB" class="sub"></figcaption>
+          </figure>
+        </div>
+        <div id="abCompareState" class="sub"></div>
+        <label class="field-label" for="abPreference">どちらが良いか</label>
+        <select id="abPreference" aria-label="どちらが良いか">
+          <option value="">（選んでください）</option>
+          <option value="A">A（元プロンプト）が良い</option>
+          <option value="B">B（顔融合文あり）が良い</option>
+          <option value="tie">引き分け</option>
+        </select>
+        <label class="field-label" for="abCompareNotes">比較コメント</label>
+        <textarea id="abCompareNotes" rows="2" placeholder="顔の意匠が明確になったか／美貌を損なう過剰変形はないか"></textarea>
+        <div class="row"><button id="abSaveComparison" class="grow primary" type="button" disabled>比較を記録</button></div>
+        <div id="abComparisonState" class="sub"></div>
+        <p class="sub ab-caution">この比較は観測記録です。順位・preference は採用判定として扱いません。</p>
+      </div>
+
+      <details class="card">
+        <summary class="section-title">書き出し</summary>
+        <p class="section-lead">この端末に保存されている記録だけを書き出します。送信はしません。</p>
+        <div class="row"><button id="abExportReviews" class="grow" type="button">レビューJSONL</button></div>
+        <div class="row"><button id="abExportComparisons" class="grow" type="button">比較JSONL</button></div>
+        <div class="row"><button id="abExportCopyList" class="grow" type="button">画像コピーリスト</button></div>
+        <div class="row"><button id="abClear" class="grow" type="button">この実験の記録を削除</button></div>
+      </details>
+
+      <div id="abStatus" class="review-status"></div>
+    </div>
+  </section>
+
   <p class="privacy">
     このページはサーバーを持たない静的サイトです。貼り付けた内容・レビュー記録・登録画像はこの端末のブラウザ内に保存され、どこにも送信されません。共有リンクや同期機能はありません。
   </p>
@@ -446,8 +592,10 @@
   var jumpButton = document.getElementById("jumpButton");
   var extractTab = document.getElementById("extractTab");
   var reviewTab = document.getElementById("reviewTab");
+  var abTab = document.getElementById("abTab");
   var extractView = document.getElementById("extractView");
   var reviewView = document.getElementById("reviewView");
+  var abView = document.getElementById("abView");
   var reviewEmpty = document.getElementById("reviewEmpty");
   var reviewContent = document.getElementById("reviewContent");
   var reviewStatus = document.getElementById("reviewStatus");
@@ -527,18 +675,26 @@
 
   function switchView(name) {
     if (activeView === "review" && name !== "review") captureReviewDraft();
-    activeView = name === "review" ? "review" : "extract";
+    activeView = name === "review" ? "review" : (name === "ab" ? "ab" : "extract");
     var reviewing = activeView === "review";
-    extractTab.setAttribute("aria-selected", reviewing ? "false" : "true");
+    var abMode = activeView === "ab";
+    extractTab.setAttribute("aria-selected", (!reviewing && !abMode) ? "true" : "false");
     reviewTab.setAttribute("aria-selected", reviewing ? "true" : "false");
-    extractView.hidden = reviewing;
+    if (abTab) abTab.setAttribute("aria-selected", abMode ? "true" : "false");
+    extractView.hidden = reviewing || abMode;
     reviewView.hidden = !reviewing;
-    bottomBar.classList.toggle("visible", !reviewing && items.length > 0);
+    if (abView) abView.hidden = !abMode;
+    bottomBar.classList.toggle("visible", !reviewing && !abMode && items.length > 0);
     reviewBottomBar.classList.toggle("visible", reviewing && items.length > 0);
     if (reviewing) {
       renderReviewAvailability();
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+    if (abMode) window.scrollTo({ top: 0, behavior: "smooth" });
+    // A/B実験画面は独立したスクリプトが担当する。表示になったことだけ知らせる。
+    try {
+      document.dispatchEvent(new CustomEvent("persona:view", { detail: { view: activeView } }));
+    } catch (_) { /* CustomEvent が無い環境でも既存機能は動かす */ }
   }
 
   function shortHash(text) {
@@ -1601,6 +1757,7 @@
 
   extractTab.addEventListener("click", function () { switchView("extract"); });
   reviewTab.addEventListener("click", function () { switchView("review"); });
+  if (abTab) abTab.addEventListener("click", function () { switchView("ab"); });
   openCurrentReviewButton.addEventListener("click", function () { switchView("review"); });
   document.getElementById("reviewPrevButton").addEventListener("click", function () { moveReview(-1); });
   document.getElementById("reviewNextButton").addEventListener("click", function () { moveReview(1); });
@@ -1666,6 +1823,1219 @@
   } else {
     renderReviewAvailability();
   }
+})();
+</script>
+<script>
+/*
+  [R3-FB] A/B実験パッケージ画面。
+
+  この端末で開いた実験パッケージ(persona-experiment-package.v1)に対して、
+  A/B本文の取り出し・画像登録・評価・比較を行い、R3-FA互換のJSONLを書き出す。
+
+  位置づけ:
+   - **汎用の器**。特定の実験の本文・insertText・データセットをこのファイルへ埋め込まない。
+     実験の中身はパッケージファイルの中だけに存在する。
+   - 記録はこの端末のブラウザ内(localStorage + IndexedDB)にのみ保存し、外部送信しない。
+   - 既存の PCEXPORT レビュー機能とは**別系統**。保存キーもDBも共有しない。
+     (既存は persona-prompt-review.v3 / comparison.topRankedImageId、
+      こちらは R3-FA互換の persona-prompt-review.v2 / comparison.bestImageId)
+   - 順位・preference から採用判定を導出しない。
+   - 利用者由来の文字列は textContent / value でのみ描く(innerHTML 補間はしない)。
+
+  既存スクリプトとはスコープを共有しない独立IIFE。既存ファイルには古い実装の
+  残骸(死んだ関数群)があるため、同名の再導入を避ける意味でも分離する。
+*/
+(function () {
+  "use strict";
+
+  var PACKAGE_SCHEMA = "persona-experiment-package.v1";
+  var STORE_KEY = "personaGenerator.abExperiment.v1";
+  var IMAGE_DB = "personaGeneratorAbImages";
+  var IMAGE_STORE = "abImagesV1";
+  var ARMS = ["A", "B"];
+
+  // 画面セッション + 端末保存の状態。パッケージ本体もここに入る。
+  var db = {
+    pkg: null,
+    conditions: [],
+    images: [],
+    reviews: [],
+    comparisons: [],
+    invalidations: []
+  };
+  var ui = {
+    sourceNo: null,
+    files: { A: null, B: null },
+    previews: Object.create(null),   // imageId -> objectURL
+    compare: { A: "", B: "" },
+    editingReview: null,
+    editingComparison: null,
+    initialized: false
+  };
+  var idCounter = 0;
+
+  // ---------------------------------------------------------------------------
+  // 小道具
+  // ---------------------------------------------------------------------------
+  function el(id) { return document.getElementById(id); }
+  function setText(id, text) { var n = el(id); if (n) n.textContent = String(text == null ? "" : text); }
+  function val(id) { var n = el(id); return n && n.value !== undefined ? String(n.value) : ""; }
+  function setVal(id, v) { var n = el(id); if (n) n.value = String(v == null ? "" : v); }
+  function disable(id, off) { var n = el(id); if (n) n.disabled = !!off; }
+  function on(id, ev, fn) { var n = el(id); if (n) n.addEventListener(ev, fn); }
+  function clear(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
+  function option(text, value) {
+    var o = document.createElement("option");
+    o.textContent = String(text);
+    o.value = String(value);
+    return o;
+  }
+  function status(text) { setText("abStatus", text); }
+  function pkgStatus(text) { setText("abPackageStatus", text); }
+  function nowIso() { return new Date().toISOString(); }
+  function makeId(prefix) {
+    idCounter += 1;
+    return prefix + "-" + new Date().toISOString().replace(/[-:.]/g, "") + "-" + idCounter;
+  }
+  function caseKeyOf(sourceNo) { return "p" + String(sourceNo); }
+  function errorsText(errors) {
+    if (!errors || !errors.length) return "入力を確認してください。";
+    return errors.slice(0, 3).map(function (e) { return e.field + ": " + e.reason; }).join(" / ");
+  }
+  function pad3(n) {
+    var s = String(n);
+    while (s.length < 3) s = "0" + s;
+    return s;
+  }
+
+  // 文字列/ファイルの SHA-256。安全なコンテキストが要る。
+  // 使えないときは**空文字を返して照合をあきらめる**のではなく、呼び出し側で明示的に断る。
+  function subtle() {
+    return (window.crypto && (window.crypto.subtle || window.crypto.webkitSubtle)) || null;
+  }
+  function toHex(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var out = "";
+    for (var i = 0; i < bytes.length; i += 1) out += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+    return out;
+  }
+  function sha256Text(text) {
+    var s = subtle();
+    if (!s || typeof TextEncoder !== "function") return Promise.resolve(null);
+    return s.digest("SHA-256", new TextEncoder().encode(String(text))).then(toHex, function () { return null; });
+  }
+  function sha256File(file) {
+    var s = subtle();
+    if (!s || !file || typeof file.arrayBuffer !== "function") return Promise.resolve(null);
+    return file.arrayBuffer()
+      .then(function (buf) { return s.digest("SHA-256", buf); })
+      .then(toHex, function () { return null; });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 保存(この端末のブラウザ内だけ)
+  // ---------------------------------------------------------------------------
+  function persist() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        pkg: db.pkg,
+        conditions: db.conditions,
+        images: db.images,
+        reviews: db.reviews,
+        comparisons: db.comparisons,
+        invalidations: db.invalidations
+      }));
+      return true;
+    } catch (e) {
+      status("保存できませんでした（保存領域が不足している可能性があります）: " + (e && e.message));
+      return false;
+    }
+  }
+  function restore() {
+    var raw = null;
+    try { raw = localStorage.getItem(STORE_KEY); } catch (_) { raw = null; }
+    if (!raw) return false;
+    try {
+      var parsed = JSON.parse(raw);
+      db.pkg = parsed.pkg || null;
+      db.conditions = parsed.conditions || [];
+      db.images = parsed.images || [];
+      db.reviews = parsed.reviews || [];
+      db.comparisons = parsed.comparisons || [];
+      db.invalidations = parsed.invalidations || [];
+      return !!db.pkg;
+    } catch (_) { return false; }
+  }
+
+  // 画像実体は IndexedDB。再読み込み後もプレビューを出せるようにする。
+  function openImageDb() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error("indexedDB が使えない")); return; }
+      var req;
+      try { req = indexedDB.open(IMAGE_DB, 1); }
+      catch (e) { reject(e); return; }
+      req.onupgradeneeded = function (event) {
+        var d = event.target.result;
+        if (!d.objectStoreNames.contains(IMAGE_STORE)) d.createObjectStore(IMAGE_STORE, { keyPath: "imageId" });
+      };
+      req.onsuccess = function (event) { resolve(event.target.result); };
+      req.onerror = function () { reject(req.error || new Error("open failed")); };
+    });
+  }
+  function putImageBlob(imageId, file) {
+    return openImageDb().then(function (d) {
+      return new Promise(function (resolve, reject) {
+        var tx = d.transaction([IMAGE_STORE], "readwrite");
+        tx.objectStore(IMAGE_STORE).put({ imageId: imageId, blob: file, updatedAt: nowIso() });
+        tx.oncomplete = function () { d.close(); resolve(true); };
+        tx.onerror = function () { d.close(); reject(tx.error || new Error("put failed")); };
+      });
+    });
+  }
+  function getImageBlob(imageId) {
+    return openImageDb().then(function (d) {
+      return new Promise(function (resolve, reject) {
+        var tx = d.transaction([IMAGE_STORE], "readonly");
+        var r = tx.objectStore(IMAGE_STORE).get(imageId);
+        r.onsuccess = function () { d.close(); resolve(r.result ? r.result.blob : null); };
+        r.onerror = function () { d.close(); reject(r.error || new Error("get failed")); };
+      });
+    });
+  }
+  function clearImageBlobs() {
+    return openImageDb().then(function (d) {
+      return new Promise(function (resolve) {
+        var tx = d.transaction([IMAGE_STORE], "readwrite");
+        tx.objectStore(IMAGE_STORE).clear();
+        tx.oncomplete = function () { d.close(); resolve(true); };
+        tx.onerror = function () { d.close(); resolve(false); };
+      });
+    }).catch(function () { return false; });
+  }
+
+  // ---------------------------------------------------------------------------
+  // プレビュー(Object URL は必ず対で解放する)
+  // ---------------------------------------------------------------------------
+  function setPreview(imageId, blob) {
+    releasePreview(imageId);
+    try { ui.previews[imageId] = URL.createObjectURL(blob); return true; }
+    catch (_) { return false; }
+  }
+  function releasePreview(imageId) {
+    var url = ui.previews[imageId];
+    if (!url) return;
+    try { URL.revokeObjectURL(url); } catch (_) { /* 解放失敗は無視 */ }
+    delete ui.previews[imageId];
+  }
+  function releaseAllPreviews() { Object.keys(ui.previews).forEach(releasePreview); }
+  function previewUrl(imageId) { return ui.previews[imageId] || null; }
+
+  // 保存済み画像の実体を読み直してプレビューを張り直す(再読み込み後の復元)。
+  function hydratePreviews(sourceNo) {
+    var rows = ARMS.reduce(function (acc, arm) { return acc.concat(activeImagesFor(sourceNo, arm)); }, []);
+    return Promise.all(rows.map(function (r) {
+      if (previewUrl(r.imageId)) return Promise.resolve(false);
+      return getImageBlob(r.imageId).then(function (blob) {
+        return blob ? setPreview(r.imageId, blob) : false;
+      }, function () { return false; });
+    })).then(function () { render(); });
+  }
+
+  // ---------------------------------------------------------------------------
+  // パッケージの検証(スキーマ + 本文ハッシュ + integrity)
+  // ---------------------------------------------------------------------------
+  // 定義の正本テキスト。書き出し側と**同じキーの並び**で組む。
+  // 可変情報(generatedAt / generatedBy / definitionSha256 / integrity)は入れない。
+  function definitionText(pkg) {
+    return JSON.stringify({
+      experiment: pkg.experiment,
+      policy: pkg.policy,
+      exportTargets: pkg.exportTargets,
+      cases: pkg.cases
+    });
+  }
+
+  function verifyPackage(pkg) {
+    var errors = [];
+    if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) {
+      return Promise.resolve({ ok: false, errors: [{ field: "package", reason: "JSON オブジェクトではない" }] });
+    }
+    if (pkg.schemaVersion !== PACKAGE_SCHEMA) {
+      errors.push({ field: "schemaVersion", reason: "対応していない形式: " + String(pkg.schemaVersion) });
+    }
+    if (!pkg.experiment || !pkg.experiment.experimentId) {
+      errors.push({ field: "experiment.experimentId", reason: "必須" });
+    }
+    if (!pkg.policy || !Array.isArray(pkg.policy.failureCodes) || !pkg.policy.failureCodes.length) {
+      errors.push({ field: "policy.failureCodes", reason: "必須" });
+    }
+    if (!Array.isArray(pkg.cases) || !pkg.cases.length) {
+      errors.push({ field: "cases", reason: "空" });
+    }
+    if (errors.length) return Promise.resolve({ ok: false, errors: errors });
+
+    var checks = [];
+    // integrity は integrity を除いた本体の SHA-256。書き出し側と同じ手順で再計算する。
+    if (pkg.integrity && pkg.integrity.value) {
+      var copy = JSON.parse(JSON.stringify(pkg));
+      delete copy.integrity;
+      checks.push(sha256Text(JSON.stringify(copy)).then(function (hex) {
+        if (hex === null) return { field: "integrity", reason: "この環境ではハッシュを計算できない（https でお試しください）" };
+        return hex === pkg.integrity.value ? null : { field: "integrity", reason: "本体のSHA-256と一致しない" };
+      }));
+    } else {
+      errors.push({ field: "integrity", reason: "必須" });
+    }
+    // definitionSha256 は実験定義そのものの同一性。
+    // 記録を引き継いでよいかの判断にそのまま使うので、値も再計算して確かめる。
+    if (typeof pkg.definitionSha256 !== "string" || !pkg.definitionSha256) {
+      errors.push({ field: "definitionSha256", reason: "必須" });
+    } else {
+      checks.push(sha256Text(definitionText(pkg)).then(function (hex) {
+        if (hex === null) return null;   // 環境不足は integrity 側で報告済み
+        return hex === pkg.definitionSha256 ? null
+          : { field: "definitionSha256", reason: "実験定義のSHA-256と一致しない" };
+      }));
+    }
+
+    pkg.cases.forEach(function (c, i) {
+      var at = "cases[" + i + "]";
+      if (!c || !c.arms || !c.arms.A || !c.arms.B) {
+        errors.push({ field: at + ".arms", reason: "A/B が揃っていない" });
+        return;
+      }
+      ARMS.forEach(function (arm) {
+        var a = c.arms[arm];
+        if (typeof a.prompt !== "string" || !a.prompt) {
+          errors.push({ field: at + ".arms." + arm + ".prompt", reason: "必須" });
+          return;
+        }
+        checks.push(sha256Text(a.prompt).then(function (hex) {
+          if (hex === null) return null;   // integrity 側で環境不足は報告済み
+          return hex === a.promptSha256 ? null
+            : { field: at + ".arms." + arm + ".promptSha256", reason: "本文のSHA-256と一致しない" };
+        }));
+      });
+      if (c.arms.A.promptSha256 && c.arms.A.promptSha256 === c.arms.B.promptSha256) {
+        errors.push({ field: at + ".arms.B.promptSha256", reason: "A と同じハッシュになっている" });
+      }
+    });
+
+    return Promise.all(checks).then(function (results) {
+      results.forEach(function (r) { if (r) errors.push(r); });
+      return errors.length ? { ok: false, errors: errors } : { ok: true };
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 行の導出(append-only + supersede。曖昧なら時刻で決めない)
+  // ---------------------------------------------------------------------------
+  function resolveTips(rows, idKey, matches) {
+    var mine = rows.filter(function (r) { return r && matches(r); });
+    var superseded = Object.create(null);
+    mine.forEach(function (r) { if (r.supersedes) superseded[r.supersedes] = true; });
+    var tips = mine.filter(function (r) { return !superseded[r[idKey]]; });
+    return { all: mine, tips: tips, active: tips.length === 1 ? tips[0] : null, ambiguous: tips.length > 1 };
+  }
+  function isDead(imageId) {
+    return db.invalidations.some(function (r) { return r && r.imageId === imageId; });
+  }
+  function allImagesFor(sourceNo, arm) {
+    var key = caseKeyOf(sourceNo);
+    return db.images.filter(function (r) { return r && r.caseKey === key && r.arm === arm; })
+      .sort(function (a, b) { return a.rank - b.rank; });
+  }
+  function activeImagesFor(sourceNo, arm) {
+    return allImagesFor(sourceNo, arm).filter(function (r) { return !isDead(r.imageId); });
+  }
+  function activeReviewFor(imageId) {
+    return resolveTips(db.reviews, "reviewId", function (r) { return r.imageId === imageId; });
+  }
+  function activeConditionFor(sourceNo) {
+    var key = caseKeyOf(sourceNo);
+    return resolveTips(db.conditions, "conditionId", function (r) { return r.caseKey === key; });
+  }
+  function comparisonIsStale(row) {
+    if (!row) return false;
+    return isDead(row.controlImageId) || isDead(row.treatmentImageId);
+  }
+  // 有効な比較 = 先端がちょうど1件で、対象画像がどちらも無効化されていないもの。
+  function usableComparisonFor(sourceNo) {
+    var key = caseKeyOf(sourceNo);
+    var tip = resolveTips(db.comparisons, "comparisonId", function (r) { return r.caseKey === key; });
+    var stale = comparisonIsStale(tip.active);
+    return { tip: tip.active, ambiguous: tip.ambiguous, stale: stale, active: stale ? null : tip.active };
+  }
+
+  function currentCase() {
+    if (!db.pkg) return null;
+    var found = null;
+    db.pkg.cases.forEach(function (c) { if (c.sourceNo === ui.sourceNo) found = c; });
+    return found;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 描画
+  // ---------------------------------------------------------------------------
+  function fillCaseSelect() {
+    var sel = el("abCaseSelect");
+    if (!sel || !db.pkg) return;
+    clear(sel);
+    db.pkg.cases.forEach(function (c) {
+      var label = "No." + c.sourceNo
+        + (c.role ? " " + c.role : "")
+        + (c.species ? " / " + c.species : "")
+        + (c.reason ? " — " + c.reason : "");
+      sel.appendChild(option(label, String(c.sourceNo)));
+    });
+    if (ui.sourceNo == null && db.pkg.cases.length) ui.sourceNo = db.pkg.cases[0].sourceNo;
+    sel.value = String(ui.sourceNo);
+  }
+
+  function renderProgress() {
+    if (!db.pkg) return;
+    var done = 0;
+    db.pkg.cases.forEach(function (c) { if (usableComparisonFor(c.sourceNo).active) done += 1; });
+    var idx = 0;
+    db.pkg.cases.forEach(function (c, i) { if (c.sourceNo === ui.sourceNo) idx = i; });
+    setText("abProgress", "対象 " + (idx + 1) + " / " + db.pkg.cases.length + "　比較記録済み " + done + " 件");
+    var c = currentCase();
+    setText("abCaseNote", c ? ("元 generationId: " + c.baselineGenerationId) : "");
+    disable("abPrevCase", idx <= 0);
+    disable("abNextCase", idx >= db.pkg.cases.length - 1);
+  }
+
+  function renderPrompts() {
+    var c = currentCase();
+    if (!c) return;
+    setVal("abPromptA", c.arms.A.prompt);
+    setVal("abPromptB", c.arms.B.prompt);
+    var insert = db.pkg.experiment.insertText || "";
+    var diffOk = c.arms.B.prompt.replace("\n" + insert, "") === c.arms.A.prompt;
+    setText("abInsertInfo", diffOk
+      ? "A との差分は指定の1文の挿入だけです（読み込み時にハッシュ照合済み）。"
+      : "注意: A/B の差分が指定の1文だけになっていません。");
+  }
+
+  function renderArm(arm) {
+    var rows = activeImagesFor(ui.sourceNo, arm);
+    var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
+
+    var list = el("abList" + arm);
+    clear(list);
+    allImagesFor(ui.sourceNo, arm).forEach(function (r) {
+      var li = document.createElement("li");
+      var dead = isDead(r.imageId);
+      var tip = activeReviewFor(r.imageId);
+      var mark = dead ? "無効化済み" : (tip.ambiguous ? "評価が曖昧" : (tip.active ? "評価済み" : "未評価"));
+      li.textContent = r.rank + ". " + r.metadata.name + "  [" + r.metadata.sha256.slice(0, 12) + "…]  " + mark;
+      if (dead) li.className = "ab-dead";
+      list.appendChild(li);
+    });
+
+    var thumbs = el("abThumbs" + arm);
+    clear(thumbs);
+    rows.forEach(function (r) {
+      var url = previewUrl(r.imageId);
+      if (!url) return;
+      var img = document.createElement("img");
+      img.className = "ab-thumb";
+      img.src = url;
+      img.alt = arm + " の登録画像 " + r.rank;
+      img.title = r.metadata.name;
+      img.setAttribute("data-ab-image-id", r.imageId);
+      if (ui.compare[arm] === r.imageId) img.setAttribute("data-ab-selected", "true");
+      img.addEventListener("click", function () { pickCompare(arm, r.imageId); });
+      thumbs.appendChild(img);
+    });
+
+    disable("abAdd" + arm, rows.length >= max || !ui.files[arm] || !activeConditionFor(ui.sourceNo).active);
+
+    var cmpSel = el("abCompare" + arm);
+    if (cmpSel) {
+      clear(cmpSel);
+      cmpSel.appendChild(option("（比較する画像を選ぶ）", ""));
+      rows.forEach(function (r) {
+        var tip = activeReviewFor(r.imageId);
+        cmpSel.appendChild(option(r.rank + ". " + r.metadata.name + (tip.active ? "（評価済み）" : "（未評価）"), r.imageId));
+      });
+      if (!rows.some(function (r) { return r.imageId === ui.compare[arm]; })) ui.compare[arm] = "";
+      cmpSel.value = ui.compare[arm];
+    }
+  }
+
+  function renderReviewTarget() {
+    var sel = el("abReviewTarget");
+    if (!sel) return;
+    var keep = sel.value;
+    clear(sel);
+    sel.appendChild(option("（評価する画像を選ぶ）", ""));
+    ARMS.forEach(function (arm) {
+      activeImagesFor(ui.sourceNo, arm).forEach(function (r) {
+        sel.appendChild(option(arm + " " + r.rank + ". " + r.metadata.name, r.imageId));
+      });
+    });
+    var still = Array.prototype.some.call(sel.options, function (o) { return o.value === keep && keep; });
+    sel.value = still ? keep : "";
+    if (!still) { ui.editingReview = null; clearReviewInputs(); }
+    disable("abInvalidate", !sel.value);
+    disable("abSaveReview", !reviewReady());
+    var tip = sel.value ? activeReviewFor(sel.value) : null;
+    setText("abReviewState", !sel.value ? "画像を選ぶと評価できます。"
+      : tip.ambiguous ? "この画像の評価の先端が複数あります（時刻では決めません）。"
+        : tip.active ? "評価済み。保存すると訂正として追記されます。" : "未評価。");
+  }
+
+  function renderCondition() {
+    var cond = activeConditionFor(ui.sourceNo).active;
+    var seedSupported = val("abSeedSupport") === "supported";
+    disable("abSeed", !seedSupported);
+    var ready = !!val("abProvider") && !!val("abModel") && !!val("abSeedSupport")
+      && (!seedSupported || !!val("abSeed"));
+    var live = activeImagesFor(ui.sourceNo, "A").length + activeImagesFor(ui.sourceNo, "B").length;
+    disable("abSaveCondition", !ready || (!!cond && live > 0));
+    setText("abConditionState", !cond
+      ? "未記録。画像を登録する前に provider / model / Seed を記録してください。"
+      : "記録済み: " + cond.provider + " / " + cond.model + " / Seed "
+        + (cond.seedSupport === "supported" ? cond.imageSeed : "非対応")
+        + (live > 0 ? "（画像が登録済みのため変更できません。直すには誤登録画像を無効化してください）"
+          : "（画像登録前なら訂正できます）"));
+  }
+
+  function renderSideBySide() {
+    var missing = [];
+    ARMS.forEach(function (arm) {
+      var img = el("abZoom" + arm);
+      var cap = el("abZoomCaption" + arm);
+      var id = ui.compare[arm];
+      var row = null;
+      activeImagesFor(ui.sourceNo, arm).forEach(function (r) { if (r.imageId === id) row = r; });
+      var url = id ? previewUrl(id) : null;
+      if (img) {
+        if (url) { img.src = url; img.alt = arm + " の比較対象画像"; img.hidden = false; }
+        else { img.removeAttribute("src"); img.alt = ""; img.hidden = true; }
+      }
+      if (cap) {
+        cap.textContent = !row ? (arm + ": 未選択")
+          : url ? (arm + ": " + row.metadata.name)
+            : (arm + ": " + row.metadata.name + "（実体を読み込めませんでした）");
+      }
+      var rows = activeImagesFor(ui.sourceNo, arm);
+      if (!rows.length) { missing.push(arm + " に有効な画像が無い"); return; }
+      if (!id) { missing.push(arm + " の比較対象が未選択"); return; }
+      var tip = activeReviewFor(id);
+      if (tip.ambiguous) missing.push(arm + " の評価の先端が複数ある");
+      else if (!tip.active) missing.push(arm + " の比較対象がまだ未評価");
+    });
+    setText("abCompareState", missing.length
+      ? "比較を記録できません: " + missing.join(" / ")
+      : "A/B とも比較対象を選び、どちらも評価済みです。");
+    return missing;
+  }
+
+  function renderComparison() {
+    var tip = usableComparisonFor(ui.sourceNo);
+    setText("abComparisonState", tip.ambiguous
+      ? "比較の先端が複数あります（時刻では決めません）。"
+      : tip.stale
+        ? "比較対象画像が無効化されたため再比較が必要です（この比較は書き出しにも進捗にも出ません）。"
+        : tip.active
+          ? "記録済み: " + tip.active.preference + "（" + tip.active.ts + "）／採用判定ではありません"
+          : "未記録");
+    var missing = renderSideBySide();
+    disable("abSaveComparison", !val("abPreference") || missing.length > 0);
+  }
+
+  function render() {
+    if (!db.pkg) return;
+    var content = el("abContent");
+    if (content) content.hidden = false;
+    var sel = el("abCaseSelect");
+    if (sel) sel.value = String(ui.sourceNo);
+    renderProgress();
+    renderPrompts();
+    renderCondition();
+    ARMS.forEach(renderArm);
+    renderReviewTarget();
+    renderComparison();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 評価フォーム(パッケージが宣言した語彙だけを使う)
+  // ---------------------------------------------------------------------------
+  function buildReviewForm() {
+    var host = el("abReviewForm");
+    if (!host || host.firstChild || !db.pkg) return;
+    var policy = db.pkg.policy;
+
+    function labeled(text, node) {
+      var wrap = document.createElement("div");
+      var lab = document.createElement("div");
+      lab.className = "field-label";
+      lab.textContent = text;
+      wrap.appendChild(lab);
+      wrap.appendChild(node);
+      return wrap;
+    }
+    var verdict = document.createElement("select");
+    verdict.id = "abVerdict";
+    verdict.appendChild(option("（選んでください）", ""));
+    (policy.verdicts || []).forEach(function (v) { verdict.appendChild(option(v, v)); });
+    host.appendChild(labeled("判定", verdict));
+
+    (policy.scoreKeys || []).forEach(function (key) {
+      var s = document.createElement("select");
+      s.id = "abScore_" + key;
+      s.appendChild(option("（選んでください）", ""));
+      for (var n = policy.scoreMin; n <= policy.scoreMax; n += 1) s.appendChild(option(String(n), String(n)));
+      host.appendChild(labeled(key === "aestheticSatisfaction" ? "美的満足度"
+        : key === "intentMatch" ? "意図一致" : key, s));
+    });
+
+    var box = document.createElement("div");
+    box.id = "abFailures";
+    (policy.failureCodes || []).forEach(function (code) {
+      var row = document.createElement("label");
+      row.className = "failure-option";
+      row.setAttribute("data-ab-failure-code", code);
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      var span = document.createElement("span");
+      span.textContent = code;
+      row.appendChild(cb);
+      row.appendChild(span);
+      box.appendChild(row);
+    });
+    host.appendChild(labeled("失敗分類", box));
+
+    var notes = document.createElement("textarea");
+    notes.id = "abReviewNotes";
+    notes.rows = 2;
+    notes.placeholder = "コメント（副作用：解剖破綻・CG感・別個体化・仮面化・衣装化など）";
+    host.appendChild(labeled("コメント", notes));
+
+    verdict.addEventListener("change", render);
+    (policy.scoreKeys || []).forEach(function (key) {
+      var n = el("abScore_" + key);
+      if (n) n.addEventListener("change", render);
+    });
+  }
+
+  function reviewReady() {
+    if (!val("abReviewTarget")) return false;
+    if (!val("abVerdict")) return false;
+    var keys = (db.pkg && db.pkg.policy.scoreKeys) || [];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (!val("abScore_" + keys[i])) return false;
+    }
+    return true;
+  }
+  function clearReviewInputs() {
+    setVal("abVerdict", "");
+    ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) { setVal("abScore_" + k, ""); });
+    setVal("abReviewNotes", "");
+    setFailures([]);
+  }
+  function collectFailures() {
+    var box = el("abFailures");
+    var out = [];
+    if (!box) return out;
+    var rows = box.querySelectorAll("[data-ab-failure-code]");
+    for (var i = 0; i < rows.length; i += 1) {
+      var cb = rows[i].querySelector("input");
+      if (cb && cb.checked) out.push(rows[i].getAttribute("data-ab-failure-code"));
+    }
+    return out;
+  }
+  function setFailures(codes) {
+    var box = el("abFailures");
+    if (!box) return;
+    var want = Object.create(null);
+    (codes || []).forEach(function (c) { want[c] = true; });
+    var rows = box.querySelectorAll("[data-ab-failure-code]");
+    for (var i = 0; i < rows.length; i += 1) {
+      var cb = rows[i].querySelector("input");
+      if (cb) cb.checked = !!want[rows[i].getAttribute("data-ab-failure-code")];
+    }
+  }
+  // 訂正時は既存の全項目を載せ直す。一部だけ載せると、触っていない項目が空で上書きされる。
+  function prefillReview() {
+    var imageId = val("abReviewTarget");
+    if (!imageId) { ui.editingReview = null; clearReviewInputs(); return; }
+    var tip = activeReviewFor(imageId);
+    if (!tip.active) { ui.editingReview = null; clearReviewInputs(); return; }
+    ui.editingReview = tip.active.reviewId;
+    setVal("abVerdict", tip.active.verdict);
+    ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
+      setVal("abScore_" + k, String(tip.active.scores[k] == null ? "" : tip.active.scores[k]));
+    });
+    setVal("abReviewNotes", tip.active.notes || "");
+    setFailures(tip.active.failures || []);
+  }
+  function prefillComparison() {
+    var tip = usableComparisonFor(ui.sourceNo);
+    var row = tip.active || tip.tip;
+    if (!row) { ui.editingComparison = null; return; }
+    if (ui.editingComparison === row.comparisonId) return;
+    ui.editingComparison = row.comparisonId;
+    setVal("abPreference", row.preference);
+    setVal("abCompareNotes", row.notes || "");
+    ui.compare.A = row.controlImageId || "";
+    ui.compare.B = row.treatmentImageId || "";
+  }
+  function prefillCondition() {
+    var cond = activeConditionFor(ui.sourceNo).active;
+    if (!cond) return;
+    setVal("abProvider", cond.provider);
+    setVal("abModel", cond.model);
+    setVal("abSeedSupport", cond.seedSupport);
+    setVal("abSeed", cond.seedSupport === "supported" ? cond.imageSeed : "");
+  }
+
+  // ---------------------------------------------------------------------------
+  // 操作
+  // ---------------------------------------------------------------------------
+  function selectCase(sourceNo) {
+    ui.sourceNo = sourceNo;
+    ui.files.A = null;
+    ui.files.B = null;
+    ui.compare.A = "";
+    ui.compare.B = "";
+    ui.editingReview = null;
+    ui.editingComparison = null;
+    releaseAllPreviews();
+    clearReviewInputs();
+    setVal("abPreference", "");
+    setVal("abCompareNotes", "");
+    setVal("abProvider", "");
+    setVal("abModel", "");
+    setVal("abSeedSupport", "");
+    setVal("abSeed", "");
+    ["abFileA", "abFileB"].forEach(function (id) { var n = el(id); if (n) n.value = ""; });
+    status("");
+    prefillCondition();
+    prefillComparison();
+    render();
+    hydratePreviews(ui.sourceNo);
+  }
+
+  function stepCase(delta) {
+    if (!db.pkg) return;
+    var idx = 0;
+    db.pkg.cases.forEach(function (c, i) { if (c.sourceNo === ui.sourceNo) idx = i; });
+    var next = idx + delta;
+    if (next < 0 || next >= db.pkg.cases.length) return;
+    selectCase(db.pkg.cases[next].sourceNo);
+  }
+
+  function pickCompare(arm, imageId) {
+    ui.compare[arm] = imageId || "";
+    setVal("abCompare" + arm, ui.compare[arm]);
+    render();
+  }
+
+  function copyText(text, label) {
+    if (!text) { status("コピーする内容がありません。"); return; }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { status(label + "をコピーしました。"); },
+          function () { status("コピーできませんでした。欄から手動で選択してください。"); });
+        return;
+      }
+    } catch (_) { /* clipboard が無い環境は下の案内へ */ }
+    status("この環境では自動コピーができません。欄から手動で選択してください。");
+  }
+
+  function saveCondition() {
+    var seedSupport = val("abSeedSupport");
+    var cond = activeConditionFor(ui.sourceNo).active;
+    var live = activeImagesFor(ui.sourceNo, "A").length + activeImagesFor(ui.sourceNo, "B").length;
+    if (cond && live > 0) {
+      status("画像が登録済みの間は生成条件を変更できません（誤登録画像を無効化してから直してください）。");
+      return;
+    }
+    if (seedSupport !== "supported" && seedSupport !== "unsupported") {
+      status("Seed対応/非対応を選んでください。");
+      return;
+    }
+    if (seedSupport === "supported" && !val("abSeed")) {
+      status("Seed対応を選んだ場合は Seed 値が必要です。");
+      return;
+    }
+    db.conditions.push({
+      conditionId: makeId("abcond"),
+      experimentId: db.pkg.experiment.experimentId,
+      caseKey: caseKeyOf(ui.sourceNo),
+      sourceNo: ui.sourceNo,
+      provider: val("abProvider"),
+      model: val("abModel"),
+      seedSupport: seedSupport,
+      imageSeed: seedSupport === "supported" ? val("abSeed") : null,
+      supersedes: cond ? cond.conditionId : null,
+      ts: nowIso()
+    });
+    persist();
+    status("画像生成条件を記録しました。");
+    render();
+  }
+
+  function addImage(arm) {
+    var file = ui.files[arm];
+    if (!file) { status("画像ファイルを選んでください。"); return; }
+    var cond = activeConditionFor(ui.sourceNo).active;
+    if (!cond) { status("先に画像生成条件（provider / model / Seed）を記録してください。"); return; }
+    var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
+    if (activeImagesFor(ui.sourceNo, arm).length >= max) {
+      status("1つの arm には最大 " + max + " 枚までです。");
+      return;
+    }
+    status(arm + " の画像ハッシュを計算しています…");
+    sha256File(file).then(function (sha) {
+      if (!sha) { status("この環境では画像ハッシュを計算できません（https でお試しください）。"); return; }
+      if (activeImagesFor(ui.sourceNo, arm).some(function (r) { return r.metadata.sha256 === sha; })) {
+        status("同じ arm に同一ハッシュの画像が既にあります。");
+        return;
+      }
+      var c = currentCase();
+      // rank は無効化済みも含む全履歴の最大+1(無効化後に追加しても重複しない)。
+      var next = 1;
+      allImagesFor(ui.sourceNo, arm).forEach(function (r) { if (r.rank >= next) next = r.rank + 1; });
+      var row = {
+        imageId: c.arms[arm].generationId + "-img-" + makeId("x"),
+        experimentId: db.pkg.experiment.experimentId,
+        caseKey: caseKeyOf(ui.sourceNo),
+        sourceNo: ui.sourceNo,
+        arm: arm,
+        armRole: c.arms[arm].role || (arm === "A" ? "control" : "treatment"),
+        armGenerationId: c.arms[arm].generationId,
+        baselineGenerationId: c.baselineGenerationId,
+        conditionId: cond.conditionId,
+        rank: next,
+        metadata: {
+          name: file.name,
+          type: file.type || "",
+          size: typeof file.size === "number" ? file.size : 0,
+          lastModified: typeof file.lastModified === "number" ? file.lastModified : 0,
+          sha256: sha
+        },
+        ts: nowIso()
+      };
+      db.images.push(row);
+      persist();
+      setPreview(row.imageId, file);
+      if (!ui.compare[arm]) ui.compare[arm] = row.imageId;
+      ui.files[arm] = null;
+      var input = el("abFile" + arm);
+      if (input) input.value = "";
+      status(arm + " に画像を登録しました（" + row.rank + " 枚目）。");
+      render();
+      putImageBlob(row.imageId, file).catch(function () {
+        status("画像は登録しましたが、実体を保存できませんでした（再読み込み後はプレビューが出ません）。");
+      });
+    }, function () {
+      status("画像ハッシュを計算できませんでした。");
+    });
+  }
+
+  function invalidateImage() {
+    var imageId = val("abReviewTarget");
+    if (!imageId) return;
+    if (isDead(imageId)) { status("この画像はすでに無効化されています。"); return; }
+    var row = null;
+    db.images.forEach(function (r) { if (r.imageId === imageId) row = r; });
+    if (!row) return;
+    db.invalidations.push({
+      invalidationId: makeId("abinv"),
+      imageId: imageId,
+      caseKey: row.caseKey,
+      arm: row.arm,
+      reason: "誤登録",
+      ts: nowIso()
+    });
+    persist();
+    releasePreview(imageId);
+    if (ui.compare[row.arm] === imageId) ui.compare[row.arm] = "";
+    ui.editingReview = null;
+    clearReviewInputs();
+    status("画像を無効化しました（記録は残り、書き出しからは外れます）。");
+    render();
+  }
+
+  function saveReview() {
+    if (!reviewReady()) { status("判定とスコアをすべて選んでください。"); return; }
+    var imageId = val("abReviewTarget");
+    var scores = {};
+    (db.pkg.policy.scoreKeys || []).forEach(function (k) { scores[k] = parseInt(val("abScore_" + k), 10); });
+    db.reviews.push({
+      reviewId: makeId("abrev"),
+      imageId: imageId,
+      verdict: val("abVerdict"),
+      scores: scores,
+      failures: collectFailures(),
+      notes: val("abReviewNotes"),
+      supersedes: ui.editingReview || null,
+      ts: nowIso()
+    });
+    persist();
+    status("評価を保存しました。");
+    prefillReview();
+    render();
+  }
+
+  function saveComparison() {
+    var pref = val("abPreference");
+    if (!pref) { status("A / B / 引き分け のいずれかを選んでください。"); return; }
+    var missing = renderSideBySide();
+    if (missing.length) { status("比較を記録できません: " + missing.join(" / ")); return; }
+    var tip = usableComparisonFor(ui.sourceNo);
+    var head = tip.active || tip.tip;
+    db.comparisons.push({
+      comparisonId: makeId("abcmp"),
+      experimentId: db.pkg.experiment.experimentId,
+      caseKey: caseKeyOf(ui.sourceNo),
+      sourceNo: ui.sourceNo,
+      preference: pref,
+      controlImageId: ui.compare.A,
+      treatmentImageId: ui.compare.B,
+      // 順位・preference は採用判定として扱わない。読み手が機械的に判別できるようにする。
+      adoptionDecision: "not-applicable",
+      notes: val("abCompareNotes"),
+      supersedes: head ? head.comparisonId : null,
+      ts: nowIso()
+    });
+    persist();
+    status("比較を記録しました（採用判定ではありません）。");
+    ui.editingComparison = null;
+    prefillComparison();
+    render();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 書き出し(R3-FA 互換)
+  // ---------------------------------------------------------------------------
+  function download(text, fileName, mime) {
+    try {
+      var blob = new Blob([text], { type: mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+      return true;
+    } catch (_) { return false; }
+  }
+  function stamp() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return String(d.getFullYear()) + p(d.getMonth() + 1) + p(d.getDate())
+      + "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+
+  function buildReviewRows() {
+    var out = [];
+    var ts = nowIso();
+    db.pkg.cases.forEach(function (c) {
+      var cond = activeConditionFor(c.sourceNo).active;
+      var cmp = usableComparisonFor(c.sourceNo).active;
+      ARMS.forEach(function (arm) {
+        var rows = activeImagesFor(c.sourceNo, arm);
+        if (!rows.length) return;
+        var picked = cmp ? (arm === "A" ? cmp.controlImageId : cmp.treatmentImageId) : "";
+        var pickedHere = rows.some(function (r) { return r.imageId === picked; }) ? picked : "";
+        out.push({
+          schemaVersion: db.pkg.exportTargets.reviewSchemaVersion,
+          reviewId: "ffrev-" + db.pkg.experiment.experimentId + "-p" + c.sourceNo + "-" + arm,
+          createdAt: rows[0].ts,
+          updatedAt: ts,
+          generationId: c.arms[arm].generationId,
+          sourceKey: c.baselineGenerationId,
+          source: {
+            format: "PCEXPORT v1",
+            batchId: c.batchId,
+            no: c.no,
+            prompt: c.arms[arm].prompt,
+            settings: c.settings,
+            settingsRaw: c.settingsRaw
+          },
+          images: rows.map(function (r) {
+            var tip = activeReviewFor(r.imageId);
+            var rev = tip.active;
+            return {
+              imageId: r.imageId,
+              rank: r.rank,
+              metadata: r.metadata,
+              evaluation: rev ? {
+                verdict: rev.verdict,
+                aestheticSatisfaction: String(rev.scores.aestheticSatisfaction),
+                intentMatch: String(rev.scores.intentMatch),
+                failures: (rev.failures || []).slice()
+              } : { verdict: "", aestheticSatisfaction: "", intentMatch: "", failures: [] },
+              notes: rev ? (rev.notes || "") : ""
+            };
+          }),
+          comparison: { bestImageId: pickedHere, notes: cmp ? (cmp.notes || "") : "" },
+          experiment: {
+            experimentSchemaVersion: db.pkg.exportTargets.experimentSchemaVersion,
+            experimentId: db.pkg.experiment.experimentId,
+            sourceNo: c.sourceNo,
+            arm: arm,
+            armRole: c.arms[arm].role,
+            baselineGenerationId: c.baselineGenerationId,
+            treatmentApplied: !!c.arms[arm].treatmentApplied,
+            insertText: arm === "B" ? db.pkg.experiment.insertText : "",
+            insertOffset: arm === "B" ? c.arms.B.insertOffset : null,
+            promptSha256: c.arms[arm].promptSha256,
+            baselinePromptSha256: c.baselinePromptSha256,
+            generationConditions: cond ? {
+              provider: cond.provider, model: cond.model,
+              seedSupport: cond.seedSupport, imageSeed: cond.imageSeed
+            } : null,
+            comparedImageIds: cmp ? { A: cmp.controlImageId, B: cmp.treatmentImageId } : null,
+            armPreference: cmp ? cmp.preference : "",
+            adoptionDecision: "not-applicable"
+          }
+        });
+      });
+    });
+    return out;
+  }
+
+  function buildComparisonRows() {
+    var out = [];
+    var ts = nowIso();
+    db.pkg.cases.forEach(function (c) {
+      var tip = usableComparisonFor(c.sourceNo);
+      if (!tip.active) return;
+      var cond = activeConditionFor(c.sourceNo).active;
+      out.push({
+        schemaVersion: db.pkg.exportTargets.experimentSchemaVersion,
+        comparisonId: tip.active.comparisonId,
+        experimentId: db.pkg.experiment.experimentId,
+        sourceNo: c.sourceNo,
+        baselineGenerationId: c.baselineGenerationId,
+        armGenerationIds: { A: c.arms.A.generationId, B: c.arms.B.generationId },
+        promptSha256: { A: c.arms.A.promptSha256, B: c.arms.B.promptSha256 },
+        comparedImageIds: { A: tip.active.controlImageId, B: tip.active.treatmentImageId },
+        generationConditions: cond ? {
+          provider: cond.provider, model: cond.model,
+          seedSupport: cond.seedSupport, imageSeed: cond.imageSeed
+        } : null,
+        preference: tip.active.preference,
+        adoptionDecision: "not-applicable",
+        adoptionNote: "この比較は観測であり、本番採用判定ではない。",
+        notes: tip.active.notes || "",
+        supersedes: tip.active.supersedes || null,
+        ts: tip.active.ts,
+        exportedAt: ts
+      });
+    });
+    return out;
+  }
+
+  function canonicalImageName(row) {
+    var ext = "";
+    var dot = String(row.metadata.name).lastIndexOf(".");
+    if (dot > 0) ext = String(row.metadata.name).slice(dot);
+    return "p" + pad3(row.sourceNo) + "-" + row.arm + "-" + row.rank + ext;
+  }
+  function buildCopyList() {
+    var lines = ["sha256\tarm\tsourceNo\trank\tsourceFileName\ttargetPath"];
+    db.pkg.cases.forEach(function (c) {
+      ARMS.forEach(function (arm) {
+        activeImagesFor(c.sourceNo, arm).forEach(function (r) {
+          lines.push([r.metadata.sha256, r.arm, r.sourceNo, r.rank, r.metadata.name,
+            "images/" + db.pkg.experiment.experimentId + "/" + canonicalImageName(r)].join("\t"));
+        });
+      });
+    });
+    return lines.join("\n") + "\n";
+  }
+  function toJsonl(rows) {
+    if (!rows.length) return "";
+    return rows.map(function (r) { return JSON.stringify(r); }).join("\n") + "\n";
+  }
+
+  function exportKind(kind) {
+    if (!db.pkg) { status("先にパッケージを読み込んでください。"); return; }
+    var rows, text, name, mime;
+    if (kind === "reviews") {
+      rows = buildReviewRows();
+      text = toJsonl(rows);
+      name = "facial-fusion-ab-reviews_" + stamp() + ".jsonl";
+      mime = "application/x-ndjson;charset=utf-8";
+    } else if (kind === "comparisons") {
+      rows = buildComparisonRows();
+      text = toJsonl(rows);
+      name = "facial-fusion-ab-comparisons_" + stamp() + ".jsonl";
+      mime = "application/x-ndjson;charset=utf-8";
+    } else {
+      text = buildCopyList();
+      rows = text.split("\n").filter(function (l) { return l; }).slice(1);
+      name = "facial-fusion-ab-image-copy-list_" + stamp() + ".tsv";
+      mime = "text/tab-separated-values;charset=utf-8";
+    }
+    if (!rows.length) { status("書き出す記録がまだありません。"); return; }
+    status(download(text, name, mime)
+      ? "書き出しました: " + name + "（" + rows.length + " 行）"
+      : "書き出せませんでした。");
+  }
+
+  // ---------------------------------------------------------------------------
+  // パッケージ読み込み
+  // ---------------------------------------------------------------------------
+  function loadPackageFile(file) {
+    if (!file) return;
+    pkgStatus("読み込んでいます…");
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try { parsed = JSON.parse(String(reader.result)); }
+      catch (e) { pkgStatus("JSON として読めませんでした: " + (e && e.message)); return; }
+      verifyPackage(parsed).then(function (verdict) {
+        if (!verdict.ok) {
+          pkgStatus("このパッケージは使えません: " + errorsText(verdict.errors));
+          return;
+        }
+        // 記録を引き継いでよいのは「同じ実験・同じ定義」のときだけ。
+        //  experimentId が同じでも本文や方針が変わっていれば、古い評価が新しい
+        //  プロンプトへ紐づいてしまうので、記録を残したまま差し替えてはいけない。
+        var cur = db.pkg;
+        var sameId = !!cur && cur.experiment.experimentId === parsed.experiment.experimentId;
+        var sameDef = !!cur && cur.definitionSha256 === parsed.definitionSha256;
+
+        if (cur && sameId && sameDef) {
+          db.pkg = parsed;
+          ui.sourceNo = null;
+          persist();
+          buildReviewForm();
+          fillCaseSelect();
+          pkgStatus("同じ実験定義を読み直しました: " + parsed.experiment.experimentId
+            + "（" + parsed.cases.length + " 件・記録はそのまま）");
+          selectCase(db.pkg.cases[0].sourceNo);
+          return;
+        }
+
+        var recordCount = db.conditions.length + db.images.length + db.reviews.length
+          + db.comparisons.length + db.invalidations.length;
+        if (cur && recordCount) {
+          var reason = sameId
+            ? "同じ実験IDですが、実験定義（本文・設定・方針）が変わっています。"
+            : "別の実験のパッケージです。";
+          if (!window.confirm(reason
+            + "\n古い記録を新しいプロンプトへ紐づけることはできないため、"
+            + "この端末に保存済みの記録（生成条件・画像・評価・比較・無効化・画像実体）を"
+            + "すべて削除してから入れ替えます。続けますか？")) {
+            pkgStatus("読み込みを中止しました。現在のパッケージと記録はそのままです。");
+            return;
+          }
+        }
+
+        // 削除を**先に**完了させてから新しいパッケージを載せる。
+        // 途中で失敗しても、古い記録が新しい定義へ結びついた状態にはしない。
+        resetRecords().then(function (blobsCleared) {
+          db.pkg = parsed;
+          ui.sourceNo = null;
+          persist();
+          buildReviewForm();
+          fillCaseSelect();
+          pkgStatus("読み込みました: " + parsed.experiment.experimentId
+            + "（" + parsed.cases.length + " 件・ハッシュ照合済み）"
+            + (cur ? "／以前の記録は削除しました" : "")
+            + (blobsCleared ? "" : "（画像実体の削除に失敗しました）"));
+          selectCase(db.pkg.cases[0].sourceNo);
+        });
+      });
+    };
+    reader.onerror = function () { pkgStatus("ファイルを読めませんでした。"); };
+    reader.readAsText(file, "utf-8");
+  }
+
+  // 記録の削除。順序を1か所に集約する:
+  //  プレビュー解放 -> 行を消す -> localStorage を先に更新 -> IndexedDB の実体を消し終える。
+  //  実体の削除に失敗しても、参照する行は既に消えているので孤児 Blob が残るだけで済む。
+  function resetRecords() {
+    releaseAllPreviews();
+    db.conditions = []; db.images = []; db.reviews = [];
+    db.comparisons = []; db.invalidations = [];
+    ui.compare.A = ""; ui.compare.B = "";
+    ui.editingReview = null; ui.editingComparison = null;
+    persist();
+    return clearImageBlobs();
+  }
+
+  function clearAll() {
+    if (!window.confirm("この実験の記録（生成条件・画像・評価・比較）をすべて削除しますか？")) return;
+    resetRecords().then(function (cleared) {
+      status("この実験の記録を削除しました（パッケージは残っています）。"
+        + (cleared ? "" : "（画像実体の削除に失敗しました）"));
+      render();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 初期化(タブが開かれた最初の1回だけ)
+  // ---------------------------------------------------------------------------
+  function init() {
+    if (ui.initialized) return;
+    ui.initialized = true;
+
+    on("abOpenButton", "click", function () { var n = el("abFileInput"); if (n) n.click(); });
+    on("abFileInput", "change", function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) loadPackageFile(f);
+      e.target.value = "";
+    });
+    on("abCaseSelect", "change", function () { selectCase(parseInt(val("abCaseSelect"), 10)); });
+    on("abPrevCase", "click", function () { stepCase(-1); });
+    on("abNextCase", "click", function () { stepCase(1); });
+    on("abProvider", "input", render);
+    on("abModel", "input", render);
+    on("abSeed", "input", render);
+    on("abSeedSupport", "change", render);
+    on("abSaveCondition", "click", saveCondition);
+    ARMS.forEach(function (arm) {
+      on("abCopy" + arm, "click", function () {
+        copyText(val("abPrompt" + arm), arm + " の本文");
+      });
+      on("abCopySettings" + arm, "click", function () {
+        var c = currentCase();
+        copyText(c ? c.settingsRaw : "", "生成設定");
+      });
+      on("abFile" + arm, "change", function (e) {
+        ui.files[arm] = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+        render();
+      });
+      on("abAdd" + arm, "click", function () { addImage(arm); });
+      on("abCompare" + arm, "change", function () { pickCompare(arm, val("abCompare" + arm)); });
+    });
+    on("abReviewTarget", "change", function () { prefillReview(); render(); });
+    on("abSaveReview", "click", saveReview);
+    on("abInvalidate", "click", invalidateImage);
+    on("abPreference", "change", renderComparison);
+    on("abSaveComparison", "click", saveComparison);
+    on("abExportReviews", "click", function () { exportKind("reviews"); });
+    on("abExportComparisons", "click", function () { exportKind("comparisons"); });
+    on("abExportCopyList", "click", function () { exportKind("copy-list"); });
+    on("abClear", "click", clearAll);
+    window.addEventListener("pagehide", releaseAllPreviews);
+
+    if (restore()) {
+      buildReviewForm();
+      fillCaseSelect();
+      pkgStatus("保存済みのパッケージを復元しました: " + db.pkg.experiment.experimentId
+        + "（" + db.pkg.cases.length + " 件）");
+      selectCase(db.pkg.cases[0].sourceNo);
+    } else {
+      pkgStatus("パッケージが読み込まれていません。");
+    }
+  }
+
+  document.addEventListener("persona:view", function (e) {
+    if (e && e.detail && e.detail.view === "ab") init();
+  });
 })();
 </script>
 </body>
