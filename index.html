@@ -220,14 +220,15 @@
   .ab-state[data-ab-state="done"] { border-color: var(--ok); color: var(--ok); }
   .ab-state[data-ab-state="ready"] { border-color: var(--accent-2); color: var(--accent-2); }
   .ab-header-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
-  .ab-header-nav button { min-height: 40px; }
+  .ab-header-nav button { min-height: 44px; }
 
   /* デスクトップは A/B を同じ高さの2列、狭い画面は縦並び。 */
   .ab-work { display: grid; grid-template-columns: 1fr; gap: 12px; }
   @media (min-width: 720px) {
-    .ab-work { grid-template-columns: 1fr 1fr; align-items: start; }
+    .ab-work { grid-template-columns: 1fr 1fr; align-items: stretch; }
+    .ab-diff { min-height: 3.2em; }
   }
-  .ab-side { min-width: 0; }
+  .ab-side { min-width: 0; display: flex; flex-direction: column; }
   .ab-side-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
   .ab-side-label {
     font-weight: 700;
@@ -280,11 +281,21 @@
   .ab-review { margin-top: 6px; }
   .ab-review .field-label { margin-top: 8px; }
   .ab-review select, .ab-review textarea { width: 100%; box-sizing: border-box; }
+  /* iOS Safariは横向きでも16px未満の入力欄へフォーカスすると拡大する。 */
+  .ab-review select,
+  .ab-review textarea,
+  #abProvider,
+  #abModel,
+  #abSeedSupport,
+  #abSeed { font-size: 16px; }
   .ab-review-empty { opacity: .75; font-size: .9em; padding: 6px 0; }
   .ab-fail-grid { display: flex; flex-wrap: wrap; gap: 4px 6px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
   .ab-secondary-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  @media (max-width: 719px) {
+    .ab-diff { overflow-wrap: anywhere; }
+  }
   /* === R3-FC END === */
   [hidden] { display: none !important; }
   .app-tabs {
@@ -298,7 +309,7 @@
     background: rgba(18,10,16,0.72);
   }
   .app-tab {
-    min-height: 40px;
+    min-height: 44px;
     padding: 8px 12px;
     border: 0;
     background: transparent;
@@ -564,7 +575,7 @@
             <span class="ab-side-label">A</span>
             <span id="abChipA" class="ab-chip"></span>
           </div>
-          <div id="abDiffA" class="sub"></div>
+          <div id="abDiffA" class="sub ab-diff"></div>
           <div class="row">
             <button id="abCopyA" class="grow primary" type="button">本文をコピー</button>
             <button id="abCopySettingsA" class="grow" type="button">生成設定をコピー</button>
@@ -593,7 +604,7 @@
             <span class="ab-side-label">B</span>
             <span id="abChipB" class="ab-chip"></span>
           </div>
-          <div id="abDiffB" class="sub"></div>
+          <div id="abDiffB" class="sub ab-diff"></div>
           <div class="row">
             <button id="abCopyB" class="grow primary" type="button">本文をコピー</button>
             <button id="abCopySettingsB" class="grow" type="button">生成設定をコピー</button>

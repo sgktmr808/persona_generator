@@ -6,7 +6,7 @@
 //   画像は選ぶ/落とすだけで登録され、その場で横並び比較に出る -> 片側だけでも個別レビューを
 //   保存でき採用扱いにならない -> 必須が揃うと一操作でレビュー2件と比較1件を保存して
 //   次の未完了ケースへ進む -> 再読み込みで条件・画像・レビュー・比較・進捗が復元 ->
-//   書き出しは R3-FB 互換 -> 375px とデスクトップで崩れない ->
+//   書き出しは R3-FB 互換 -> iPhoneの縦横とデスクトップで崩れない ->
 //   **既存 PCEXPORT レビュー機能が壊れていない**。
 //
 //  このスクリプトが使うパッケージは**合成フィクスチャ**で、実験の実データは含まない。
@@ -354,6 +354,23 @@ function phaseLoad(pkg) {
       "ケース状態が未生成でない: " + byId("abCaseState").textContent);
     note(/完了 0 件/.test(byId("abDoneCount").textContent), "完了件数が出ていない");
 
+    // A/B の説明文量が違っても、主要操作とカード下端を同じ基準線へ揃える。
+    // 文言変更で折返しが増えても、片側だけが下へずれる状態を公開しない。
+    const copyARect = byId("abCopyA").getBoundingClientRect();
+    const copyBRect = byId("abCopyB").getBoundingClientRect();
+    const dropARect = byId("abDropA").getBoundingClientRect();
+    const dropBRect = byId("abDropB").getBoundingClientRect();
+    const sideARect = document.querySelector('[data-ab-side="A"]').getBoundingClientRect();
+    const sideBRect = document.querySelector('[data-ab-side="B"]').getBoundingClientRect();
+    if (window.innerWidth >= 720) {
+      note(Math.abs(copyARect.top - copyBRect.top) <= 1,
+        "A/B のコピーボタン上端がずれている: " + JSON.stringify({ A: copyARect.top, B: copyBRect.top }));
+      note(Math.abs(dropARect.top - dropBRect.top) <= 1,
+        "A/B の画像登録欄がずれている: " + JSON.stringify({ A: dropARect.top, B: dropBRect.top }));
+      note(Math.abs(sideARect.height - sideBRect.height) <= 1,
+        "A/B カードの高さが揃っていない: " + JSON.stringify({ A: sideARect.height, B: sideBRect.height }));
+    }
+
     // 本文は既定で閉じている & コピーは1バイトも変えない
     const c0 = pkgArg.cases[0];
     const details = byId("abPromptA").closest("details");
@@ -404,7 +421,7 @@ function phaseWorkbench() {
     const wide = window.innerWidth >= 720;
     note(ra.width > 0 && rb.width > 0, "比較画像が表示されていない");
     if (wide) {
-      note(Math.abs(ra.top - rb.top) < 60 && ra.left < rb.left,
+      note(Math.abs(ra.top - rb.top) <= 1 && ra.left < rb.left,
         "デスクトップで A/B が横並びでない: " + JSON.stringify({ at: ra.top, bt: rb.top, al: ra.left, bl: rb.left }));
     }
 
@@ -708,21 +725,23 @@ function phaseRegression(arg) {
 }
 
 // ---------------------------------------------------------------------------
-// フェーズ4: 375px 幅で横スクロールと極端な縮小が無い
+// フェーズ4: iPhoneの主要画面幅・横向きで崩れない
 // ---------------------------------------------------------------------------
-function phaseMobile() {
-  return (async () => {
+function phaseMobile(spec) {
+  return (async (a) => {
     __PRELUDE__
     byId("abTab").click();
     await delay(600);
+    const label = a.label;
+    const viewportWidth = document.documentElement.clientWidth;
     const overflow = Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    note(overflow <= 1, "375px で横溢れしている: " + overflow + "px");
+    note(overflow <= 1, label + " で横溢れしている: " + overflow + "px");
     const view = byId("abView");
     const wide = [];
     view.querySelectorAll("*").forEach((n) => {
       if (n.scrollWidth > document.documentElement.clientWidth + 1) wide.push(n.id || n.className || n.tagName);
     });
-    note(wide.length === 0, "画面幅より広い要素がある: " + wide.slice(0, 5).join(", "));
+    note(wide.length === 0, label + " で画面幅より広い要素がある: " + wide.slice(0, 5).join(", "));
     // 比較画像が極端に縮まない(縦並びで幅を確保する)
     // 直前のフェーズで記録を消しているので、計測用に1枚だけ置き直す。
     if (byId("abSetup").hidden === false) {
@@ -732,16 +751,38 @@ function phaseMobile() {
     if (byId("abBigA").hidden) await pickImage("A", "m1.png", 71);
     await waitFor(() => byId("abBigA").hidden === false && byId("abBigA").naturalWidth > 0,
       "big image decoded");
-    const a = byId("abBigA").getBoundingClientRect();
-    note(a.width >= document.documentElement.clientWidth * 0.6,
-      "モバイルで比較画像が小さすぎる: " + Math.round(a.width) + "px");
+    const imageRect = byId("abBigA").getBoundingClientRect();
+    const minImageRatio = viewportWidth < 720 ? 0.6 : 0.35;
+    note(imageRect.width >= viewportWidth * minImageRatio,
+      label + " で比較画像が小さすぎる: " + Math.round(imageRect.width) + "px");
+    if (viewportWidth >= 720) {
+      const copyA = byId("abCopyA").getBoundingClientRect();
+      const copyB = byId("abCopyB").getBoundingClientRect();
+      const dropA = byId("abDropA").getBoundingClientRect();
+      const dropB = byId("abDropB").getBoundingClientRect();
+      note(Math.abs(copyA.top - copyB.top) <= 1,
+        label + " でA/Bの操作上端がずれている");
+      note(Math.abs(dropA.top - dropB.top) <= 1,
+        label + " でA/Bの画像登録欄がずれている");
+    }
     // 主要操作が押せる
     ["abPrev", "abNext", "abJumpIncomplete", "abSaveNext", "abCopyA", "abCopyB"].forEach((id) => {
       const r = byId(id).getBoundingClientRect();
-      note(r.width > 0 && r.height >= 32, id + " が操作できない大きさ: " + JSON.stringify({ w: r.width, h: r.height }));
+      note(r.width > 0 && r.height >= 44, label + " の " + id + " が44px未満: " + JSON.stringify({ w: r.width, h: r.height }));
     });
-    return { pass: problems.length === 0, problems, overflow, bigWidth: Math.round(byId("abBigA").getBoundingClientRect().width) };
-  })();
+    ["abProvider", "abModel", "abSeedSupport", "abSeed"].forEach((id) => {
+      const fontSize = parseFloat(getComputedStyle(byId(id)).fontSize);
+      note(fontSize >= 16, label + " の " + id + " がiOSズームを招く文字サイズ: " + fontSize + "px");
+    });
+    return {
+      pass: problems.length === 0,
+      problems,
+      label,
+      overflow,
+      viewportWidth,
+      bigWidth: Math.round(byId("abBigA").getBoundingClientRect().width)
+    };
+  })(__ARG__);
 }
 
 // ---------------------------------------------------------------------------
@@ -856,10 +897,19 @@ async function main() {
     const regressed = await run(phaseRegression, "tamper/definition/removal/clear regressions",
       { tampered, same, changed });
 
-    await client.send("Emulation.setDeviceMetricsOverride",
-      { width: 375, height: 812, deviceScaleFactor: 3, mobile: true }, sessionId);
-    await wait(800);
-    const mobile = await run(phaseMobile, "375px layout");
+    const iphoneSpecs = [
+      { label: "iPhone 320 portrait", width: 320, height: 568, deviceScaleFactor: 2, mobile: true },
+      { label: "iPhone 375 portrait", width: 375, height: 812, deviceScaleFactor: 3, mobile: true },
+      { label: "iPhone 390 portrait", width: 390, height: 844, deviceScaleFactor: 3, mobile: true },
+      { label: "iPhone 430 portrait", width: 430, height: 932, deviceScaleFactor: 3, mobile: true },
+      { label: "iPhone landscape", width: 844, height: 390, deviceScaleFactor: 3, mobile: true },
+    ];
+    const mobileResults = [];
+    for (const spec of iphoneSpecs) {
+      await client.send("Emulation.setDeviceMetricsOverride", spec, sessionId);
+      await wait(500);
+      mobileResults.push(await run(phaseMobile, spec.label + " layout", spec));
+    }
     await client.send("Emulation.setDeviceMetricsOverride",
       { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
     await wait(500);
@@ -880,7 +930,7 @@ async function main() {
     console.log(`  declined swap changed nothing; approved swap wiped records+blobs+source and returned to the source picker`);
     console.log(`  removing an image made the comparison stale: dropped from progress and both exports`);
     console.log(`  clearing records wiped blobs and the carried source, returning to the source picker`);
-    console.log(`  375px overflow ${mobile.overflow}px, comparison image ${mobile.bigWidth}px wide, controls tappable`);
+    console.log(`  iPhone matrix passed: ${mobileResults.map((m) => `${m.viewportWidth}px overflow ${m.overflow}px/image ${m.bigWidth}px`).join(" | ")}; controls >=44px`);
     console.log(`  existing PCEXPORT flow still saves ${legacy.legacySchema}`);
   } finally {
     if (client) client.close();
