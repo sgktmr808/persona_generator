@@ -80,6 +80,22 @@ check("データファイル(JSONL / パッケージ / data/)をコミットし�
 // 4. 汎用側は残っている(器そのものを消していない)。
 const indexHtml = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 check("A/B実験画面がある", indexHtml.indexOf('id="abView"') > 0);
+check("比較ワークベンチの主要導線がある",
+  indexHtml.indexOf('id="abSaveNext"') > 0
+  && indexHtml.indexOf('id="abJumpIncomplete"') > 0
+  && indexHtml.indexOf('id="abDropA"') > 0 && indexHtml.indexOf('id="abDropB"') > 0);
+check("画像は選択した時点で登録する（別の登録ボタンを持たない）",
+  indexHtml.indexOf('id="abAddA"') < 0 && indexHtml.indexOf('id="abAddB"') < 0);
+check("生成元は引き継ぐ（ケースごとの再入力を強いない）",
+  indexHtml.indexOf("defaultCondition") > 0 && indexHtml.indexOf("ensureConditionRow") > 0);
+check("最初は作成元を選ばせる（技術用語から始めない）",
+  indexHtml.indexOf('id="abSetupChatgpt"') > 0 && indexHtml.indexOf('id="abSetupOther"') > 0
+  && indexHtml.indexOf("どこで画像を作りますか") > 0);
+check("誤登録画像を外す操作がある（物理削除ではない）",
+  indexHtml.indexOf('id="abRemoveA"') > 0 && indexHtml.indexOf('id="abRemoveB"') > 0
+  && indexHtml.indexOf("invalidationId") > 0);
+check("記録削除・別定義への入れ替えで引き継ぎ生成元も消す",
+  /db\.defaultCondition = null;/.test(indexHtml));
 check("パッケージ形式の宣言だけを持つ", indexHtml.indexOf("persona-experiment-package.v1") > 0);
 check("書き出し先スキーマは読み込んだパッケージから取る(埋め込まない)",
   indexHtml.indexOf("exportTargets.reviewSchemaVersion") > 0);
@@ -91,7 +107,9 @@ check("記録は端末内だけ(外部送信の経路が無い)",
   !/\bfetch\s*\(|XMLHttpRequest|navigator\.sendBeacon|new\s+WebSocket/.test(indexHtml));
 // 純粋性の検査はコメントを外した実行コードに対して行う(説明文に語が出るだけで落ちるため)。
 check("A/B画面が innerHTML 補間を使わない", (function () {
-  const at = indexHtml.indexOf("[R3-FB]");
+  // A/B 機能ブロックの開始点。改版でタグが変わっても追随できるようにする。
+  var at = indexHtml.indexOf("[R3-FC]");
+  if (at < 0) at = indexHtml.indexOf("[R3-FB]");
   if (at < 0) return false;
   const code = indexHtml.slice(at)
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -103,6 +121,10 @@ check("実験定義の同一性を definitionSha256 で判定する",
 check("定義が変わったら記録を消してから入れ替える",
   indexHtml.indexOf("resetRecords") > 0
   && /resetRecords\(\)\.then/.test(indexHtml));
+check("R3-FB の保存形式を維持している",
+  indexHtml.indexOf("adoptionDecision") > 0
+  && indexHtml.indexOf("controlImageId") > 0 && indexHtml.indexOf("treatmentImageId") > 0
+  && indexHtml.indexOf("supersedes") > 0);
 check("A/B の保存先が既存レビューと分かれている",
   indexHtml.indexOf("personaGenerator.abExperiment.v1") > 0
   && indexHtml.indexOf("personaGeneratorAbImages") > 0);
