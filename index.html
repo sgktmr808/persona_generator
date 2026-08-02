@@ -268,6 +268,8 @@
     border: 1px solid var(--border); border-radius: 6px;
     background: var(--bg-elevated); cursor: pointer;
   }
+  .ab-thumb[data-ab-reviewed="false"] { border-color: #b87931; }
+  .ab-thumb[data-ab-reviewed="true"] { border-color: #3f8a68; }
   .ab-thumb[data-ab-selected="true"] { outline: 2px solid var(--accent-2); outline-offset: 1px; }
   .ab-thumb[data-ab-dead="true"] { opacity: .35; }
 
@@ -1984,6 +1986,7 @@
     conditions: [],
     images: [],
     reviews: [],
+    reviewDrafts: Object.create(null),
     comparisons: [],
     invalidations: []
   };
@@ -2065,6 +2068,7 @@
         conditions: db.conditions,
         images: db.images,
         reviews: db.reviews,
+        reviewDrafts: db.reviewDrafts,
         comparisons: db.comparisons,
         invalidations: db.invalidations
       }));
@@ -2084,6 +2088,8 @@
       db.conditions = parsed.conditions || [];
       db.images = parsed.images || [];
       db.reviews = parsed.reviews || [];
+      db.reviewDrafts = parsed.reviewDrafts && typeof parsed.reviewDrafts === "object"
+        ? parsed.reviewDrafts : Object.create(null);
       db.comparisons = parsed.comparisons || [];
       db.invalidations = parsed.invalidations || [];
       // R3-FB の記録には defaultCondition が無い。既存の condition 行から拾って引き継ぐ
@@ -2335,7 +2341,13 @@
   function caseState(sourceNo) {
     var a = activeImagesFor(sourceNo, "A").length;
     var b = activeImagesFor(sourceNo, "B").length;
-    if (usableComparisonFor(sourceNo).active) return { key: "done", label: "完了" };
+    var allReviewed = ARMS.every(function (arm) {
+      return activeImagesFor(sourceNo, arm).every(function (r) {
+        return reviewValuesReady(reviewValuesFor(r.imageId))
+          && !Object.prototype.hasOwnProperty.call(db.reviewDrafts, r.imageId);
+      });
+    });
+    if (usableComparisonFor(sourceNo).active && allReviewed) return { key: "done", label: "完了" };
     if (!a && !b) return { key: "empty", label: "未生成" };
     if (a && !b) return { key: "partial", label: "Aのみ" };
     if (!a && b) return { key: "partial", label: "Bのみ" };
@@ -2424,22 +2436,19 @@
     notes.placeholder = "コメント（解剖破綻・CG感・別個体化・仮面化・衣装化など）";
     labeled("コメント", notes);
 
-    verdict.addEventListener("change", renderFlow);
+    function keepDraft() {
+      captureReviewDraft(arm);
+      renderFlow();
+    }
+    verdict.addEventListener("change", keepDraft);
     (policy.scoreKeys || []).forEach(function (key) {
       var n = el(reviewFieldId(arm, key));
-      if (n) n.addEventListener("change", renderFlow);
+      if (n) n.addEventListener("change", keepDraft);
     });
+    box.addEventListener("change", keepDraft);
+    notes.addEventListener("input", keepDraft);
   }
 
-  function reviewInputsReady(arm) {
-    if (!ui.selected[arm]) return false;
-    if (!val(reviewFieldId(arm, "verdict"))) return false;
-    var keys = (db.pkg && db.pkg.policy.scoreKeys) || [];
-    for (var i = 0; i < keys.length; i += 1) {
-      if (!val(reviewFieldId(arm, keys[i]))) return false;
-    }
-    return true;
-  }
   function clearReviewInputs(arm) {
     setVal(reviewFieldId(arm, "verdict"), "");
     ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) { setVal(reviewFieldId(arm, k), ""); });
@@ -2468,18 +2477,84 @@
       if (cb) cb.checked = !!want[rows[i].getAttribute("data-ab-failure-code")];
     }
   }
-  // 既存評価は**全項目**を載せ直す。一部だけだと、触っていない項目が空で上書きされる。
+
+  function reviewValuesFromRow(row) {
+    if (!row) return null;
+    var scores = {};
+    ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
+      scores[k] = row.scores && row.scores[k] != null ? String(row.scores[k]) : "";
+    });
+    return {
+      verdict: row.verdict || "",
+      scores: scores,
+      failures: (row.failures || []).slice(),
+      notes: row.notes || ""
+    };
+  }
+  function currentReviewValues(arm) {
+    var scores = {};
+    ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
+      scores[k] = val(reviewFieldId(arm, k));
+    });
+    return {
+      verdict: val(reviewFieldId(arm, "verdict")),
+      scores: scores,
+      failures: collectFailures(arm),
+      notes: val(reviewFieldId(arm, "notes"))
+    };
+  }
+  function reviewValuesEqual(a, b) {
+    if (!a || !b || a.verdict !== b.verdict || a.notes !== b.notes) return false;
+    var keys = (db.pkg && db.pkg.policy.scoreKeys) || [];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (String((a.scores || {})[keys[i]] || "") !== String((b.scores || {})[keys[i]] || "")) return false;
+    }
+    return JSON.stringify((a.failures || []).slice().sort()) === JSON.stringify((b.failures || []).slice().sort());
+  }
+  function reviewValuesEmpty(values) {
+    if (!values || values.verdict || values.notes || (values.failures || []).length) return false;
+    return ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
+      return !String((values.scores || {})[k] || "");
+    });
+  }
+  function reviewValuesFor(imageId) {
+    if (!imageId) return null;
+    if (Object.prototype.hasOwnProperty.call(db.reviewDrafts, imageId)) return db.reviewDrafts[imageId];
+    var tip = activeReviewFor(imageId);
+    return tip.active ? reviewValuesFromRow(tip.active) : null;
+  }
+  function reviewValuesReady(values) {
+    if (!values || !values.verdict) return false;
+    return ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
+      return !!String((values.scores || {})[k] || "");
+    });
+  }
+  function captureReviewDraft(arm) {
+    var imageId = ui.selected[arm];
+    if (!imageId || !el(reviewFieldId(arm, "verdict"))) return;
+    var values = currentReviewValues(arm);
+    var tip = activeReviewFor(imageId);
+    var saved = tip.active ? reviewValuesFromRow(tip.active) : null;
+    if ((saved && reviewValuesEqual(values, saved)) || (!saved && reviewValuesEmpty(values))) {
+      delete db.reviewDrafts[imageId];
+    } else {
+      db.reviewDrafts[imageId] = values;
+    }
+    persist();
+  }
+
+  // 画像を切り替えても、保存前の入力を画像ごとに載せ直す。
   function prefillReview(arm) {
     var imageId = ui.selected[arm];
     if (!imageId) { clearReviewInputs(arm); return; }
-    var tip = activeReviewFor(imageId);
-    if (!tip.active) { clearReviewInputs(arm); return; }
-    setVal(reviewFieldId(arm, "verdict"), tip.active.verdict);
+    var values = reviewValuesFor(imageId);
+    if (!values) { clearReviewInputs(arm); return; }
+    setVal(reviewFieldId(arm, "verdict"), values.verdict);
     ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
-      setVal(reviewFieldId(arm, k), String(tip.active.scores[k] == null ? "" : tip.active.scores[k]));
+      setVal(reviewFieldId(arm, k), String(values.scores[k] == null ? "" : values.scores[k]));
     });
-    setVal(reviewFieldId(arm, "notes"), tip.active.notes || "");
-    setFailures(arm, tip.active.failures || []);
+    setVal(reviewFieldId(arm, "notes"), values.notes || "");
+    setFailures(arm, values.failures || []);
   }
 
   // ---------------------------------------------------------------------------
@@ -2507,7 +2582,10 @@
     var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
 
     setVal("abPrompt" + arm, c.arms[arm].prompt);
-    setText("abChip" + arm, rows.length ? ("画像 " + rows.length + " / " + max) : "画像なし");
+    var reviewed = rows.filter(function (r) { return reviewValuesReady(reviewValuesFor(r.imageId)); }).length;
+    setText("abChip" + arm, rows.length
+      ? ("評価 " + reviewed + " / " + rows.length + "　画像上限 " + max)
+      : "画像なし");
     var insert = db.pkg.experiment.insertText || "";
     if (arm === "A") {
       setText("abDiffA", "元のプロンプトのまま。");
@@ -2539,9 +2617,11 @@
       img.className = "ab-thumb";
       if (url) img.src = url;
       img.alt = arm + " の画像 " + r.rank + (dead ? "（無効化済み）" : "");
-      img.title = r.metadata.name;
+      var isReviewed = reviewValuesReady(reviewValuesFor(r.imageId));
+      img.title = r.metadata.name + (isReviewed ? "（評価済み）" : "（未評価）");
       img.setAttribute("data-ab-image-id", r.imageId);
       if (dead) img.setAttribute("data-ab-dead", "true");
+      img.setAttribute("data-ab-reviewed", isReviewed ? "true" : "false");
       if (ui.selected[arm] === r.imageId) img.setAttribute("data-ab-selected", "true");
       if (!dead) img.addEventListener("click", function () { selectImage(arm, r.imageId); });
       thumbs.appendChild(img);
@@ -2568,23 +2648,30 @@
   }
 
   function renderFlow() {
-    var present = ARMS.filter(function (arm) { return !!ui.selected[arm]; });
+    var rowsByArm = {
+      A: activeImagesFor(ui.sourceNo, "A"),
+      B: activeImagesFor(ui.sourceNo, "B")
+    };
+    var present = ARMS.filter(function (arm) { return rowsByArm[arm].length > 0; });
     var both = present.length === 2;
 
-    // 保存を止めるのは「置いてある画像の必須入力が欠けている」ときだけ。
-    //  片側しか無いケースはそれ自体が有効な記録なので、もう片方の不在で止めない。
+    // 複数画像を登録した場合は、表示中の1枚だけでなく全画像の評価を必須にする。
     var blocking = [];
     present.forEach(function (arm) {
-      if (!reviewInputsReady(arm)) blocking.push(arm + " の判定とスコアが未入力です");
+      var missing = rowsByArm[arm].filter(function (r) {
+        return !reviewValuesReady(reviewValuesFor(r.imageId));
+      }).length;
+      if (missing) blocking.push(arm + " の未評価画像が " + missing + " 枚あります");
     });
     if (both && !val("abPreference")) blocking.push("どちらが良いかが未選択です");
-    var absent = ARMS.filter(function (arm) { return !ui.selected[arm]; })
+    var absent = ARMS.filter(function (arm) { return rowsByArm[arm].length === 0; })
       .map(function (arm) { return arm + " の画像がまだありません"; });
 
     var btn = el("abSaveNext");
+    var imageCount = rowsByArm.A.length + rowsByArm.B.length;
     if (btn) {
-      btn.textContent = both ? "この比較を保存して次へ"
-        : present.length === 1 ? (present[0] + " の評価だけ保存する")
+      btn.textContent = both ? ("全" + imageCount + "枚の評価と比較を保存して次へ")
+        : present.length === 1 ? (present[0] + " の全画像評価を保存する")
           : "画像を置いてください";
     }
     var ready = present.length > 0 && !blocking.length;
@@ -2679,6 +2766,7 @@
   // 操作
   // ---------------------------------------------------------------------------
   function goToCase(sourceNo) {
+    if (ui.sourceNo != null && ui.sourceNo !== sourceNo) ARMS.forEach(captureReviewDraft);
     ui.sourceNo = sourceNo;
     ui.selected.A = "";
     ui.selected.B = "";
@@ -2729,6 +2817,8 @@
     if (!row) return;
     if (isDead(imageId)) { status("この画像はすでに外してあります。"); return; }
     if (!window.confirm("この画像を比較から外しますか？（記録は残り、書き出しには出ません）")) return;
+    captureReviewDraft(arm);
+    delete db.reviewDrafts[imageId];
     db.invalidations.push({
       invalidationId: makeId("abinv"),
       imageId: imageId,
@@ -2751,6 +2841,7 @@
   }
 
   function selectImage(arm, imageId) {
+    captureReviewDraft(arm);
     ui.selected[arm] = imageId || "";
     prefillReview(arm);
     render();
@@ -2799,6 +2890,8 @@
   function addImages(arm, fileList) {
     var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return Promise.resolve();
+    // 新しい画像へ選択が移る前に、現在表示中の画像の入力を退避する。
+    captureReviewDraft(arm);
     var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
     var cond = ensureConditionRow(ui.sourceNo);
     if (!cond) { status("先に画像生成元を登録してください。"); return Promise.resolve(); }
@@ -2862,27 +2955,21 @@
     });
   }
 
-  function buildReviewInput(arm) {
-    var scores = {};
-    ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
-      scores[k] = parseInt(val(reviewFieldId(arm, k)), 10);
-    });
-    return {
-      imageId: ui.selected[arm],
-      verdict: val(reviewFieldId(arm, "verdict")),
-      scores: scores,
-      failures: collectFailures(arm),
-      notes: val(reviewFieldId(arm, "notes"))
-    };
-  }
-
-  // 一操作で「A評価・B評価・A/B比較」を既存の append-only 形式で保存し、次の未完了ケースへ。
+  // 一操作で「全登録画像の評価・A/B比較」を既存の append-only 形式で保存し、次の未完了ケースへ。
   function saveAndNext() {
-    var present = ARMS.filter(function (arm) { return !!ui.selected[arm]; });
+    ARMS.forEach(captureReviewDraft);
+    var rowsByArm = {
+      A: activeImagesFor(ui.sourceNo, "A"),
+      B: activeImagesFor(ui.sourceNo, "B")
+    };
+    var present = ARMS.filter(function (arm) { return rowsByArm[arm].length > 0; });
     if (!present.length) { status("先に画像を置いてください。"); return; }
     for (var i = 0; i < present.length; i += 1) {
-      if (!reviewInputsReady(present[i])) {
-        status(present[i] + " の判定とスコアを選んでください。");
+      var missing = rowsByArm[present[i]].filter(function (r) {
+        return !reviewValuesReady(reviewValuesFor(r.imageId));
+      }).length;
+      if (missing) {
+        status(present[i] + " の未評価画像が " + missing + " 枚あります。サムネイルを切り替えて評価してください。");
         return;
       }
     }
@@ -2890,17 +2977,25 @@
     if (both && !val("abPreference")) { status("どちらが良いかを選んでください。"); return; }
 
     present.forEach(function (arm) {
-      var input = buildReviewInput(arm);
-      var tip = activeReviewFor(input.imageId);
-      db.reviews.push({
-        reviewId: makeId("abrev"),
-        imageId: input.imageId,
-        verdict: input.verdict,
-        scores: input.scores,
-        failures: input.failures,
-        notes: input.notes,
-        supersedes: tip.active ? tip.active.reviewId : null,
-        ts: nowIso()
+      rowsByArm[arm].forEach(function (row) {
+        if (!Object.prototype.hasOwnProperty.call(db.reviewDrafts, row.imageId)) return;
+        var input = db.reviewDrafts[row.imageId];
+        var tip = activeReviewFor(row.imageId);
+        var scores = {};
+        ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
+          scores[k] = parseInt(input.scores[k], 10);
+        });
+        db.reviews.push({
+          reviewId: makeId("abrev"),
+          imageId: row.imageId,
+          verdict: input.verdict,
+          scores: scores,
+          failures: (input.failures || []).slice(),
+          notes: input.notes || "",
+          supersedes: tip.active ? tip.active.reviewId : null,
+          ts: nowIso()
+        });
+        delete db.reviewDrafts[row.imageId];
       });
     });
 
@@ -3120,6 +3215,7 @@
   function resetRecords() {
     releaseAllPreviews();
     db.conditions = []; db.images = []; db.reviews = [];
+    db.reviewDrafts = Object.create(null);
     db.comparisons = []; db.invalidations = [];
     // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
     // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。

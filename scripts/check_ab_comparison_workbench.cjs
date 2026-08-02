@@ -4,9 +4,10 @@
 //  確かめること(ブリーフ §5 の受入条件):
 //   生成元は1回の登録で次ケースへ引き継がれる -> 本文は既定で閉じ、コピーは1バイト不変 ->
 //   画像は選ぶ/落とすだけで登録され、その場で横並び比較に出る -> 片側だけでも個別レビューを
-//   保存でき採用扱いにならない -> 必須が揃うと一操作でレビュー2件と比較1件を保存して
+//   保存でき採用扱いにならない -> 必須が揃うと一操作で全画像レビューと比較1件を保存して
 //   次の未完了ケースへ進む -> 再読み込みで条件・画像・レビュー・比較・進捗が復元 ->
 //   書き出しは R3-FB 互換 -> iPhoneの縦横とデスクトップで崩れない ->
+//   複数画像を切り替えても下書きが消えず全画像が保存される ->
 //   **既存 PCEXPORT レビュー機能が壊れていない**。
 //
 //  このスクリプトが使うパッケージは**合成フィクスチャ**で、実験の実データは含まない。
@@ -430,27 +431,58 @@ function phaseWorkbench() {
     note(/同一画像/.test(st()), "同一ハッシュが拒否されていない: " + st());
     note(store().images.length === 2, "同一ハッシュが登録された");
 
-    // 必須が揃うまで保存できない
+    // 1枚目を評価してから2枚目を追加する。画像が切り替わっても入力を失ってはいけない。
     note(byId("abSaveNext").disabled === true, "未評価で保存が押せる");
-    reviewSide("A", "hold", "2", "4", "耳が人間寄り");
+    reviewSide("A", "hold", "2", "4", "A1 耳が人間寄り");
     const anat = byId("abRevA_failures").querySelector('[data-ab-failure-code="anatomy"]');
     anat.querySelector("input").checked = true;
+    anat.querySelector("input").dispatchEvent(new Event("change", { bubbles: true }));
     await delay(150);
     note(byId("abSaveNext").disabled === true, "B 未評価で保存が押せる");
-    reviewSide("B", "accept", "4", "5");
+    reviewSide("B", "accept", "4", "5", "B1 顔の意匠が明確");
+    await pickImage("A", "a2.png", 23);
+    await pickImage("B", "b2.png", 29);
+    note(store().images.length === 4, "2枚ずつ登録されていない");
+    note(byId("abSaveNext").disabled === true, "2枚目が未評価なのに保存が押せる");
+
+    reviewSide("A", "accept", "5", "5", "A2 まとまりが良い");
+    reviewSide("B", "hold", "3", "4", "B2 変形がやや強い");
     await delay(150);
+
+    // 1枚目へ戻ると、保存前の判定・スコア・失敗分類・コメントがすべて復元される。
+    byId("abThumbsA").querySelectorAll("img")[0].click();
+    await waitFor(() => byId("abRevA_notes").value === "A1 耳が人間寄り", "A1 draft restored");
+    note(byId("abRevA_verdict").value === "hold"
+      && byId("abRevA_aestheticSatisfaction").value === "2"
+      && byId("abRevA_intentMatch").value === "4", "A1 の判定・スコアが消えた");
+    note(anat.querySelector("input").checked === true, "A1 の失敗分類が消えた");
+    byId("abThumbsB").querySelectorAll("img")[0].click();
+    await waitFor(() => byId("abRevB_notes").value === "B1 顔の意匠が明確", "B1 draft restored");
+    note(byId("abRevB_verdict").value === "accept"
+      && byId("abRevB_aestheticSatisfaction").value === "4"
+      && byId("abRevB_intentMatch").value === "5", "B1 の判定・スコアが消えた");
+
+    // 比較対象は2枚目へ戻す。2枚目の入力も同じように復元される。
+    byId("abThumbsA").querySelectorAll("img")[1].click();
+    byId("abThumbsB").querySelectorAll("img")[1].click();
+    await waitFor(() => byId("abRevA_notes").value === "A2 まとまりが良い"
+      && byId("abRevB_notes").value === "B2 変形がやや強い", "second drafts restored");
+    note(Object.keys(store().reviewDrafts || {}).length === 4, "画像ごとの下書きが4件保存されていない");
+
+    // 全画像の必須項目が揃っていても、A/B preference までは保存できない。
     note(byId("abSaveNext").disabled === true, "preference 未選択で保存が押せる");
     setVal("abPreference", "B");
     setVal("abCompareNotes", "顔の意匠が明確になった");
     await waitFor(() => !byId("abSaveNext").disabled, "save enabled");
-    note(byId("abSaveNext").textContent === "この比較を保存して次へ",
+    note(byId("abSaveNext").textContent === "全4枚の評価と比較を保存して次へ",
       "保存ボタンの文言が違う: " + byId("abSaveNext").textContent);
 
-    // 一操作でレビュー2件と比較1件を保存し、次の未完了ケースへ
+    // 一操作でレビュー4件と比較1件を保存し、次の未完了ケースへ
     byId("abSaveNext").click();
     await waitFor(() => /ケース 2 \/ 2/.test(byId("abCaseCounter").textContent), "advanced to case 2");
     const s = store();
-    note(s.reviews.length === 2, "レビューが2件でない: " + s.reviews.length);
+    note(s.reviews.length === 4, "レビューが4件でない: " + s.reviews.length);
+    note(Object.keys(s.reviewDrafts || {}).length === 0, "保存後も下書きが残っている");
     note(s.comparisons.length === 1, "比較が1件でない: " + s.comparisons.length);
     note(s.comparisons[0].adoptionDecision === "not-applicable", "比較が採用判定外になっていない");
     note(s.comparisons[0].preference === "B", "preference が保存されていない");
@@ -471,17 +503,21 @@ function phaseWorkbench() {
     await pickImage("A", "a2.png", 41);
     reviewSide("A", "reject", "1", "1", "不採用");
     await waitFor(() => !byId("abSaveNext").disabled, "single side enabled");
-    note(byId("abSaveNext").textContent === "A の評価だけ保存する",
+    note(byId("abSaveNext").textContent === "A の全画像評価を保存する",
       "片側保存の文言が違う: " + byId("abSaveNext").textContent);
     byId("abSaveNext").click();
     await waitS(/片側だけの記録/, "single side saved");
     const s2 = store();
-    note(s2.reviews.length === 3, "片側レビューが保存されていない: " + s2.reviews.length);
+    note(s2.reviews.length === 5, "片側レビューが保存されていない: " + s2.reviews.length);
     note(s2.comparisons.length === 1, "片側なのに比較が作られた: " + s2.comparisons.length);
     const single = s2.reviews[s2.reviews.length - 1];
     note(single.verdict === "reject", "不採用の判定が保存されていない");
     note(byId("abCaseState").textContent === "Aのみ", "片側保存後の状態が Aのみ でない");
     note(/完了 1 件/.test(byId("abDoneCount").textContent), "片側保存が完了扱いになっている");
+
+    // 保存後に書き始めた変更も、再読み込みをまたいで画像単位の下書きとして残る。
+    setVal("abRevA_notes", "再読込でも残る下書き");
+    note(Object.keys(store().reviewDrafts || {}).length === 1, "再読込前の下書きが端末保存されていない");
 
     return { pass: problems.length === 0, problems, reviews: s2.reviews.length,
       comparisons: s2.comparisons.length, wide };
@@ -500,7 +536,7 @@ function phaseReloadExport(arg) {
     await waitFor(() => byId("abWorkbench").hidden === false, "workbench restored");
 
     const s = store();
-    note(s.images.length === 3 && s.reviews.length === 3 && s.comparisons.length === 1,
+    note(s.images.length === 5 && s.reviews.length === 5 && s.comparisons.length === 1,
       "再読み込み後に記録が残っていない: " + JSON.stringify({ i: s.images.length, r: s.reviews.length, c: s.comparisons.length }));
     note(!!s.defaultCondition && s.defaultCondition.imageSeed === "4242",
       "生成元が復元されていない");
@@ -514,7 +550,8 @@ function phaseReloadExport(arg) {
     await waitFor(() => byId("abBigA").hidden === false, "preview restored");
     note(byId("abBigA").src.indexOf("blob:") === 0, "復元したプレビューが Object URL でない");
     await waitFor(() => byId("abRevA_verdict").value === "reject", "review restored");
-    note(byId("abRevA_notes").value === "不採用", "評価コメントが復元されていない");
+    note(byId("abRevA_notes").value === "再読込でも残る下書き", "保存前の評価コメントが再読込後に復元されていない");
+    note(Object.keys(s.reviewDrafts || {}).length === 1, "保存前の画像別下書きが再読込後に残っていない");
 
     // 完了ケースへ戻ると比較も復元される
     byId("abPrev").click();
@@ -522,9 +559,8 @@ function phaseReloadExport(arg) {
     note(byId("abCaseState").textContent === "完了", "完了ケースの状態が違う");
     await waitFor(() => byId("abPreference").value === "B", "preference restored");
     note(byId("abCompareNotes").value === "顔の意匠が明確になった", "比較コメントが復元されていない");
-    await waitFor(() => byId("abRevA_verdict").value === "hold", "case1 review restored");
-    note(byId("abRevA_failures").querySelector('[data-ab-failure-code="anatomy"]').querySelector("input").checked === true,
-      "失敗分類が復元されていない");
+    await waitFor(() => byId("abRevA_verdict").value === "accept", "case1 selected review restored");
+    note(byId("abRevA_notes").value === "A2 まとまりが良い", "選択中画像の評価が復元されていない");
 
     // 書き出しは R3-FB/R3-FA 互換のまま
     const orig = URL.createObjectURL;
@@ -554,6 +590,12 @@ function phaseReloadExport(arg) {
     note(rowA.experiment.adoptionDecision === "not-applicable", "書き出しが採用判定外でない");
     note(typeof rowA.images[0].evaluation.aestheticSatisfaction === "string",
       "スコアが v2 の文字列形でない");
+    note(rowA.images.length === 2 && rowB.images.length === 2
+      && rowA.images.concat(rowB.images).every((im) => !!im.evaluation.verdict
+        && !!im.evaluation.aestheticSatisfaction && !!im.evaluation.intentMatch),
+      "登録した4画像の評価がすべて書き出されていない");
+    note(rowA.images[0].evaluation.failures.indexOf("anatomy") >= 0,
+      "切替前画像の失敗分類が書き出されていない");
     note(rowA.comparison.bestImageId === s.comparisons[0].controlImageId,
       "bestImageId が比較対象でない");
     // 片側だけのケースは比較を持たず、順位1位・採用扱いにならない
@@ -567,7 +609,7 @@ function phaseReloadExport(arg) {
       "比較JSONLが変わっている: " + cmpRows.length);
     note(copyText.split("\n")[0] === "sha256\tarm\tsourceNo\trank\tsourceFileName\ttargetPath",
       "画像コピーリストの見出しが変わっている");
-    note(copyText.trim().split("\n").length === 1 + 3, "コピーリストの行数が合わない");
+    note(copyText.trim().split("\n").length === 1 + 5, "コピーリストの行数が合わない");
 
     return { pass: problems.length === 0, problems, reviewRows: rows.length, cmpRows: cmpRows.length };
   })(__ARG__);
@@ -601,19 +643,19 @@ function phaseRegression(arg) {
       inp.dispatchEvent(new Event("change", { bubbles: true }));
     };
 
-    // 前提: ケース1が完了、ケース2に A の単独レビューがある状態
+    // 前提: ケース1が4画像で完了、ケース2に A の単独レビューがある状態
     let now = read();
-    note(now.images.length === 3 && now.reviews.length === 3 && now.comparisons.length === 1,
+    note(now.images.length === 5 && now.reviews.length === 5 && now.comparisons.length === 1,
       "前提の記録が揃っていない: " + JSON.stringify({ i: now.images.length, r: now.reviews.length, c: now.comparisons.length }));
     const blobsBefore = await countBlobs();
-    note(blobsBefore === 3, "前提の画像実体が3件でない: " + blobsBefore);
+    note(blobsBefore === 5, "前提の画像実体が5件でない: " + blobsBefore);
 
     // --- (1) 改ざんパッケージは拒否し、読込済みを置換しない ---
     const shownBefore = byId("abPromptA").value;
     drop(a.tampered, "tampered.json");
     await waitFor(() => /使えません/.test(byId("abPackageStatus").textContent), "tampered rejected");
     note(byId("abPromptA").value === shownBefore, "拒否したのに本文が差し替わった");
-    note(read().images.length === 3, "拒否したのに記録が変わった");
+    note(read().images.length === 5, "拒否したのに記録が変わった");
 
     // --- (2) 同じ定義(日時だけ違う)の読み直しは記録も実体も保持 ---
     window.__confirms = [];
@@ -621,11 +663,11 @@ function phaseRegression(arg) {
     drop(a.same, "same-definition.json");
     await waitFor(() => /記録はそのまま/.test(byId("abPackageStatus").textContent), "same definition");
     now = read();
-    note(now.images.length === 3 && now.reviews.length === 3 && now.comparisons.length === 1
+    note(now.images.length === 5 && now.reviews.length === 5 && now.comparisons.length === 1
       && now.conditions.length >= 1, "同一定義の読み直しで記録が失われた");
     note(!!now.defaultCondition, "同一定義の読み直しで生成元が失われた");
     note(window.__confirms.length === 0, "同一定義なのに確認を求めた");
-    note(await countBlobs() === 3, "同一定義の読み直しで画像実体が消えた");
+    note(await countBlobs() === 5, "同一定義の読み直しで画像実体が消えた");
     note(byId("abWorkbench").hidden === false, "同一定義なのに生成元登録へ戻った");
 
     // --- (3) 定義変更を拒否すると何も変わらない ---
@@ -636,9 +678,9 @@ function phaseRegression(arg) {
     note(window.__confirms.length === 1 && /実験定義（本文・設定・方針）が変わって/.test(window.__confirms[0]),
       "定義差の説明が確認文に無い: " + (window.__confirms[0] || ""));
     now = read();
-    note(now.images.length === 3 && now.reviews.length === 3 && !!now.defaultCondition,
+    note(now.images.length === 5 && now.reviews.length === 5 && !!now.defaultCondition,
       "拒否したのに記録が変わった");
-    note(await countBlobs() === 3, "拒否したのに画像実体が消えた");
+    note(await countBlobs() === 5, "拒否したのに画像実体が消えた");
     note(byId("abWorkbench").hidden === false, "拒否したのに画面が戻った");
 
     // --- (4) 承認すると旧記録・実体・生成元を消してから入れ替える ---
@@ -650,6 +692,7 @@ function phaseRegression(arg) {
     note(now.images.length === 0 && now.reviews.length === 0 && now.comparisons.length === 0
       && now.conditions.length === 0 && now.invalidations.length === 0,
       "定義変更後に旧記録が残っている");
+    note(Object.keys(now.reviewDrafts || {}).length === 0, "定義変更後に旧下書きが残っている");
     note(!now.defaultCondition, "定義変更後に生成元が残っている");
     note(await countBlobs() === 0, "定義変更後に画像実体が残っている");
     note(byId("abSetup").hidden === false && byId("abWorkbench").hidden === true,
@@ -714,6 +757,7 @@ function phaseRegression(arg) {
     now = read();
     note(now.images.length === 0 && now.reviews.length === 0 && now.comparisons.length === 0
       && now.conditions.length === 0 && now.invalidations.length === 0, "全削除で記録が残っている");
+    note(Object.keys(now.reviewDrafts || {}).length === 0, "全削除で下書きが残っている");
     note(!now.defaultCondition, "全削除で生成元が残っている");
     note(await countBlobs() === 0, "全削除で画像実体が残っている");
     note(byId("abSetup").hidden === false && byId("abWorkbench").hidden === true,
