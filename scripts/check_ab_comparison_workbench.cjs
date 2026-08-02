@@ -764,7 +764,35 @@ function phaseRegression(arg) {
       "全削除後に生成元の登録へ戻っていない");
     note(!!now.pkg, "全削除でパッケージまで消えた");
 
-    return { pass: problems.length === 0, problems, blobsBefore };
+    // --- (7) 公称上限のA/B各5枚でも、10枚すべてを保持・保存できる ---
+    byId("abSetupChatgpt").click();
+    await waitFor(() => byId("abWorkbench").hidden === false, "workbench for max images");
+    for (let i = 1; i <= 5; i += 1) {
+      await pickImage("A", "max-a" + i + ".png", 100 + i);
+      reviewSide("A", i % 2 ? "accept" : "hold", String((i % 5) + 1), String(((i + 1) % 5) + 1), "A" + i);
+      await pickImage("B", "max-b" + i + ".png", 120 + i);
+      reviewSide("B", i % 2 ? "hold" : "accept", String(((i + 2) % 5) + 1), String(((i + 3) % 5) + 1), "B" + i);
+    }
+    await delay(150);
+    now = read();
+    note(now.images.length === 10 && Object.keys(now.reviewDrafts || {}).length === 10,
+      "上限10画像の入力が保持されていない: " + JSON.stringify({ images: now.images.length, drafts: Object.keys(now.reviewDrafts || {}).length }));
+    note(byId("abThumbsA").querySelectorAll("img").length === 5
+      && byId("abThumbsB").querySelectorAll("img").length === 5, "A/B各5枚のサムネイルが出ていない");
+    await pickImage("A", "max-a6.png", 199);
+    note(/上限/.test(st()) && read().images.length === 10, "6枚目が上限で拒否されていない");
+    setVal("abPreference", "tie");
+    await waitFor(() => !byId("abSaveNext").disabled, "max images ready");
+    note(byId("abSaveNext").textContent === "全10枚の評価と比較を保存して次へ",
+      "上限時の保存対象枚数が明示されていない: " + byId("abSaveNext").textContent);
+    byId("abSaveNext").click();
+    await waitFor(() => read().reviews.length === 10 && read().comparisons.length === 1, "max images saved");
+    now = read();
+    note(Object.keys(now.reviewDrafts || {}).length === 0, "上限10画像の保存後に下書きが残っている");
+    byId("abPrev").click();
+    await waitFor(() => byId("abThumbsA").querySelectorAll("img").length === 5, "max case restored");
+
+    return { pass: problems.length === 0, problems, blobsBefore, maxImages: now.images.length };
   })(__ARG__);
 }
 
@@ -786,8 +814,10 @@ function phaseMobile(spec) {
       if (n.scrollWidth > document.documentElement.clientWidth + 1) wide.push(n.id || n.className || n.tagName);
     });
     note(wide.length === 0, label + " で画面幅より広い要素がある: " + wide.slice(0, 5).join(", "));
-    // 比較画像が極端に縮まない(縦並びで幅を確保する)
-    // 直前のフェーズで記録を消しているので、計測用に1枚だけ置き直す。
+    note(byId("abThumbsA").querySelectorAll("img").length === 5
+      && byId("abThumbsB").querySelectorAll("img").length === 5,
+      label + " で上限5枚のサムネイルが欠けている");
+    // 比較画像が極端に縮まない(縦並びで幅を確保する)。直前フェーズの上限5枚状態で測る。
     if (byId("abSetup").hidden === false) {
       byId("abSetupChatgpt").click();
       await waitFor(() => byId("abWorkbench").hidden === false, "workbench for mobile");
@@ -974,6 +1004,7 @@ async function main() {
     console.log(`  declined swap changed nothing; approved swap wiped records+blobs+source and returned to the source picker`);
     console.log(`  removing an image made the comparison stale: dropped from progress and both exports`);
     console.log(`  clearing records wiped blobs and the carried source, returning to the source picker`);
+    console.log(`  public maximum covered: ${regressed.maxImages} images (A/B 5 each) retained, gated, saved, and rendered on every viewport`);
     console.log(`  iPhone matrix passed: ${mobileResults.map((m) => `${m.viewportWidth}px overflow ${m.overflow}px/image ${m.bigWidth}px`).join(" | ")}; controls >=44px`);
     console.log(`  existing PCEXPORT flow still saves ${legacy.legacySchema}`);
   } finally {
