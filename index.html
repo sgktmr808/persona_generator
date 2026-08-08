@@ -292,6 +292,28 @@
   #abSeed { font-size: 16px; }
   .ab-review-empty { opacity: .75; font-size: .9em; padding: 6px 0; }
   .ab-fail-grid { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+  /* 重要要素の反映。項目の文が長くても片側だけ崩れないよう、必ず折り返して縦に積む。 */
+  .ab-priority { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ab-priority-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .ab-priority-label {
+    font-size: .92em;
+    line-height: 1.5;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+  }
+  .ab-priority-select { width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px; }
+  .ab-priority-item[data-ab-priority-answered="false"] { border-color: #b87931; }
+  .ab-missing { margin-top: 4px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
   .ab-secondary-row { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -2343,11 +2365,14 @@
     var b = activeImagesFor(sourceNo, "B").length;
     var allReviewed = ARMS.every(function (arm) {
       return activeImagesFor(sourceNo, arm).every(function (r) {
-        return reviewValuesReady(reviewValuesFor(r.imageId))
+        return reviewValuesReady(reviewValuesFor(r.imageId), sourceNo)
           && !Object.prototype.hasOwnProperty.call(db.reviewDrafts, r.imageId);
       });
     });
-    if (usableComparisonFor(sourceNo).active && allReviewed) return { key: "done", label: "完了" };
+    // 必要枚数を宣言したパッケージでは、両面がその枚数に届くまで完了にしない。
+    var need = requiredImagesPerArm();
+    var enough = !need || (a >= need && b >= need);
+    if (usableComparisonFor(sourceNo).active && allReviewed && enough) return { key: "done", label: "完了" };
     if (!a && !b) return { key: "empty", label: "未生成" };
     if (a && !b) return { key: "partial", label: "Aのみ" };
     if (!a && b) return { key: "partial", label: "Bのみ" };
@@ -2382,6 +2407,126 @@
   // ---------------------------------------------------------------------------
   function reviewFieldId(arm, name) { return "abRev" + arm + "_" + name; }
 
+  // ---------------------------------------------------------------------------
+  // 重要要素の反映(優先項目チェック)
+  //  パッケージが policy.priorityChecksRequired を宣言し、そのケースが
+  //  priorityItems を持つときだけ出す。宣言の無い既存パッケージは従来どおり。
+  //  画面へ出すのは人間向けの短文だけで、内部IDやハッシュは載せない。
+  // ---------------------------------------------------------------------------
+  var PRIORITY_STATUSES = [
+    { value: "present", label: "出ている" },
+    { value: "missing", label: "欠けている" },
+    { value: "unclear", label: "判断困難" }
+  ];
+
+  function priorityRequired() {
+    return !!(db.pkg && db.pkg.policy && db.pkg.policy.priorityChecksRequired === true);
+  }
+  function requiredImagesPerArm() {
+    var n = db.pkg && db.pkg.policy ? db.pkg.policy.requiredImagesPerArm : null;
+    return typeof n === "number" && n > 0 ? n : 0;
+  }
+  function caseBySourceNo(sourceNo) {
+    if (!db.pkg) return null;
+    var found = null;
+    db.pkg.cases.forEach(function (c) { if (c.sourceNo === sourceNo) found = c; });
+    return found;
+  }
+  function priorityItemsFor(sourceNo) {
+    if (!priorityRequired()) return [];
+    var c = caseBySourceNo(sourceNo);
+    var items = c && Array.isArray(c.priorityItems) ? c.priorityItems : [];
+    return items.filter(function (it) {
+      return it && typeof it.itemId === "string" && it.itemId && typeof it.label === "string" && it.label;
+    });
+  }
+
+  // 表示中のケースに合わせて項目行を作り直す。項目が同じなら何もしない
+  // (入力中の値を消さないため)。作り直したときだけ true を返す。
+  var priorityFormSignature = { A: null, B: null };
+  function priorityFormSig(items) {
+    return items.map(function (it) { return it.itemId + "" + it.label; }).join("");
+  }
+  function syncPriorityForm(arm) {
+    var items = priorityItemsFor(ui.sourceNo);
+    var sig = priorityFormSig(items);
+    if (priorityFormSignature[arm] === sig) return false;
+    priorityFormSignature[arm] = sig;
+    var head = el(reviewFieldId(arm, "priorityHead"));
+    var list = el(reviewFieldId(arm, "priority"));
+    if (!list) return false;
+    clear(list);
+    show(reviewFieldId(arm, "priorityHead"), items.length > 0);
+    if (head) head.textContent = "重要要素の反映";
+    items.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "ab-priority-item";
+      row.setAttribute("data-ab-priority-id", it.itemId);
+      row.setAttribute("data-ab-priority-answered", "false");
+      var label = document.createElement("div");
+      label.className = "ab-priority-label";
+      label.textContent = it.label;
+      var sel = document.createElement("select");
+      sel.className = "ab-priority-select";
+      sel.setAttribute("aria-label", "重要要素の反映: " + it.label);
+      sel.appendChild(option("（選んでください）", ""));
+      PRIORITY_STATUSES.forEach(function (s) { sel.appendChild(option(s.label, s.value)); });
+      row.appendChild(label);
+      row.appendChild(sel);
+      list.appendChild(row);
+    });
+    return true;
+  }
+
+  function collectPriority(arm) {
+    var out = Object.create(null);
+    var list = el(reviewFieldId(arm, "priority"));
+    if (!list) return out;
+    var rows = list.querySelectorAll("[data-ab-priority-id]");
+    for (var i = 0; i < rows.length; i += 1) {
+      var sel = rows[i].querySelector("select");
+      out[rows[i].getAttribute("data-ab-priority-id")] = sel ? sel.value : "";
+    }
+    return out;
+  }
+  function setPriority(arm, values) {
+    var list = el(reviewFieldId(arm, "priority"));
+    if (!list) return;
+    var map = values || Object.create(null);
+    var rows = list.querySelectorAll("[data-ab-priority-id]");
+    for (var i = 0; i < rows.length; i += 1) {
+      var id = rows[i].getAttribute("data-ab-priority-id");
+      var sel = rows[i].querySelector("select");
+      var v = Object.prototype.hasOwnProperty.call(map, id) ? String(map[id] || "") : "";
+      if (sel) sel.value = v;
+      rows[i].setAttribute("data-ab-priority-answered", v ? "true" : "false");
+    }
+  }
+  function markPriorityAnswered(arm) {
+    var list = el(reviewFieldId(arm, "priority"));
+    if (!list) return;
+    var rows = list.querySelectorAll("[data-ab-priority-id]");
+    for (var i = 0; i < rows.length; i += 1) {
+      var sel = rows[i].querySelector("select");
+      rows[i].setAttribute("data-ab-priority-answered", sel && sel.value ? "true" : "false");
+    }
+  }
+  // 未回答の項目数。判定に使うのは status が空のものだけで、unclear は回答済み。
+  function missingPriorityAnswers(values, sourceNo) {
+    var items = priorityItemsFor(sourceNo);
+    if (!items.length) return 0;
+    var map = (values && values.priority) || Object.create(null);
+    var n = 0;
+    items.forEach(function (it) { if (!String(map[it.itemId] || "")) n += 1; });
+    return n;
+  }
+  function priorityChecksFromValues(values, sourceNo) {
+    return priorityItemsFor(sourceNo).map(function (it) {
+      var map = (values && values.priority) || Object.create(null);
+      return { itemId: it.itemId, status: String(map[it.itemId] || "") };
+    });
+  }
+
   function buildReviewForm(arm) {
     var host = el("abReview" + arm);
     if (!host || !db.pkg) return;
@@ -2413,6 +2558,19 @@
         : key === "intentMatch" ? "意図一致" : key, s);
     });
 
+    // 重要要素の反映。行はケースごとに syncPriorityForm が入れる。
+    var priorityHead = document.createElement("div");
+    priorityHead.className = "field-label";
+    priorityHead.id = reviewFieldId(arm, "priorityHead");
+    priorityHead.textContent = "重要要素の反映";
+    priorityHead.hidden = true;
+    host.appendChild(priorityHead);
+    var priorityList = document.createElement("div");
+    priorityList.id = reviewFieldId(arm, "priority");
+    priorityList.className = "ab-priority";
+    host.appendChild(priorityList);
+    priorityFormSignature[arm] = null;
+
     var box = document.createElement("div");
     box.id = reviewFieldId(arm, "failures");
     box.className = "ab-fail-grid";
@@ -2438,6 +2596,7 @@
 
     function keepDraft() {
       captureReviewDraft(arm);
+      markPriorityAnswered(arm);
       renderFlow();
     }
     verdict.addEventListener("change", keepDraft);
@@ -2445,6 +2604,7 @@
       var n = el(reviewFieldId(arm, key));
       if (n) n.addEventListener("change", keepDraft);
     });
+    priorityList.addEventListener("change", keepDraft);
     box.addEventListener("change", keepDraft);
     notes.addEventListener("input", keepDraft);
   }
@@ -2454,6 +2614,7 @@
     ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) { setVal(reviewFieldId(arm, k), ""); });
     setVal(reviewFieldId(arm, "notes"), "");
     setFailures(arm, []);
+    setPriority(arm, Object.create(null));
   }
   function collectFailures(arm) {
     var box = el(reviewFieldId(arm, "failures"));
@@ -2478,6 +2639,23 @@
     }
   }
 
+  function priorityMapFromChecks(checks) {
+    var map = Object.create(null);
+    (checks || []).forEach(function (pc) {
+      if (pc && pc.itemId) map[pc.itemId] = String(pc.status || "");
+    });
+    return map;
+  }
+  function priorityMapsEqual(a, b) {
+    var keys = Object.create(null);
+    Object.keys(a || {}).forEach(function (k) { keys[k] = true; });
+    Object.keys(b || {}).forEach(function (k) { keys[k] = true; });
+    var names = Object.keys(keys);
+    for (var i = 0; i < names.length; i += 1) {
+      if (String((a || {})[names[i]] || "") !== String((b || {})[names[i]] || "")) return false;
+    }
+    return true;
+  }
   function reviewValuesFromRow(row) {
     if (!row) return null;
     var scores = {};
@@ -2488,7 +2666,8 @@
       verdict: row.verdict || "",
       scores: scores,
       failures: (row.failures || []).slice(),
-      notes: row.notes || ""
+      notes: row.notes || "",
+      priority: priorityMapFromChecks(row.priorityChecks)
     };
   }
   function currentReviewValues(arm) {
@@ -2500,7 +2679,8 @@
       verdict: val(reviewFieldId(arm, "verdict")),
       scores: scores,
       failures: collectFailures(arm),
-      notes: val(reviewFieldId(arm, "notes"))
+      notes: val(reviewFieldId(arm, "notes")),
+      priority: collectPriority(arm)
     };
   }
   function reviewValuesEqual(a, b) {
@@ -2509,10 +2689,14 @@
     for (var i = 0; i < keys.length; i += 1) {
       if (String((a.scores || {})[keys[i]] || "") !== String((b.scores || {})[keys[i]] || "")) return false;
     }
+    if (!priorityMapsEqual(a.priority, b.priority)) return false;
     return JSON.stringify((a.failures || []).slice().sort()) === JSON.stringify((b.failures || []).slice().sort());
   }
   function reviewValuesEmpty(values) {
     if (!values || values.verdict || values.notes || (values.failures || []).length) return false;
+    var priority = values.priority || {};
+    var answered = Object.keys(priority).some(function (k) { return !!String(priority[k] || ""); });
+    if (answered) return false;
     return ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
       return !String((values.scores || {})[k] || "");
     });
@@ -2523,11 +2707,15 @@
     var tip = activeReviewFor(imageId);
     return tip.active ? reviewValuesFromRow(tip.active) : null;
   }
-  function reviewValuesReady(values) {
+  // 評価が揃っているか。優先項目を宣言したパッケージでは、全項目の3択も必須にする。
+  function reviewValuesReady(values, sourceNo) {
     if (!values || !values.verdict) return false;
-    return ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
+    var scoresOk = ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
       return !!String((values.scores || {})[k] || "");
     });
+    if (!scoresOk) return false;
+    if (sourceNo == null) return true;
+    return missingPriorityAnswers(values, sourceNo) === 0;
   }
   function captureReviewDraft(arm) {
     var imageId = ui.selected[arm];
@@ -2555,6 +2743,7 @@
     });
     setVal(reviewFieldId(arm, "notes"), values.notes || "");
     setFailures(arm, values.failures || []);
+    setPriority(arm, values.priority || Object.create(null));
   }
 
   // ---------------------------------------------------------------------------
@@ -2578,22 +2767,28 @@
   function renderSide(arm) {
     var c = currentCase();
     if (!c) return;
+    if (syncPriorityForm(arm)) prefillReview(arm);
     var rows = activeImagesFor(ui.sourceNo, arm);
     var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
 
     setVal("abPrompt" + arm, c.arms[arm].prompt);
-    var reviewed = rows.filter(function (r) { return reviewValuesReady(reviewValuesFor(r.imageId)); }).length;
+    var reviewed = rows.filter(function (r) { return reviewValuesReady(reviewValuesFor(r.imageId), ui.sourceNo); }).length;
     setText("abChip" + arm, rows.length
       ? ("評価 " + reviewed + " / " + rows.length + "　画像上限 " + max)
       : "画像なし");
+    // 差分の説明。1文挿入型のパッケージは従来どおり照合して出す。
+    // それ以外の処理を宣言したパッケージは、パッケージが持つ人間向けの要約を使う。
     var insert = db.pkg.experiment.insertText || "";
+    var summary = typeof c.arms[arm].diffSummary === "string" ? c.arms[arm].diffSummary : "";
     if (arm === "A") {
-      setText("abDiffA", "元のプロンプトのまま。");
-    } else {
+      setText("abDiffA", summary || "元のプロンプトのまま。");
+    } else if (insert) {
       var same = c.arms.B.prompt.replace("\n" + insert, "") === c.arms.A.prompt;
       setText("abDiffB", same
         ? "A に指定の1文を足しただけ（読み込み時に照合済み）。"
         : "注意: A との差分が指定の1文だけになっていません。");
+    } else {
+      setText("abDiffB", summary || "A とは別の本文です（読み込み時に本文のハッシュを照合済み）。");
     }
 
     var drop = el("abDrop" + arm);
@@ -2647,40 +2842,91 @@
     show("abRemove" + arm, !!sel);
   }
 
-  function renderFlow() {
+  // 保存に足りていない入力の内訳。件数は「入力単位」で数える。
+  function flowGaps() {
     var rowsByArm = {
       A: activeImagesFor(ui.sourceNo, "A"),
       B: activeImagesFor(ui.sourceNo, "B")
     };
     var present = ARMS.filter(function (arm) { return rowsByArm[arm].length > 0; });
     var both = present.length === 2;
+    var need = requiredImagesPerArm();
+    var scoreKeys = (db.pkg && db.pkg.policy.scoreKeys) || [];
+    var scoreLabel = { aestheticSatisfaction: "美的満足度", intentMatch: "意図一致" };
+    var reasons = [];
+    var count = 0;
 
-    // 複数画像を登録した場合は、表示中の1枚だけでなく全画像の評価を必須にする。
-    var blocking = [];
-    present.forEach(function (arm) {
-      var missing = rowsByArm[arm].filter(function (r) {
-        return !reviewValuesReady(reviewValuesFor(r.imageId));
-      }).length;
-      if (missing) blocking.push(arm + " の未評価画像が " + missing + " 枚あります");
+    // 1. 必要枚数
+    ARMS.forEach(function (arm) {
+      if (!need) return;
+      var short = need - rowsByArm[arm].length;
+      if (short > 0) { count += short; reasons.push(arm + " の画像があと " + short + " 枚"); }
     });
-    if (both && !val("abPreference")) blocking.push("どちらが良いかが未選択です");
-    var absent = ARMS.filter(function (arm) { return rowsByArm[arm].length === 0; })
+
+    // 2. 画像ごとの評価(判定・スコア・重要要素)
+    ARMS.forEach(function (arm) {
+      var noVerdict = 0, noScore = 0, noPriority = 0;
+      rowsByArm[arm].forEach(function (r) {
+        var v = reviewValuesFor(r.imageId);
+        if (!v || !v.verdict) noVerdict += 1;
+        scoreKeys.forEach(function (k) { if (!v || !String((v.scores || {})[k] || "")) noScore += 1; });
+        noPriority += missingPriorityAnswers(v, ui.sourceNo);
+      });
+      if (noVerdict) { count += noVerdict; reasons.push(arm + " の判定が " + noVerdict + " 件"); }
+      if (noScore) {
+        count += noScore;
+        reasons.push(arm + " の" + scoreKeys.map(function (k) { return scoreLabel[k] || k; }).join("・")
+          + "が " + noScore + " 件");
+      }
+      if (noPriority) { count += noPriority; reasons.push(arm + " の重要要素の反映が " + noPriority + " 件"); }
+    });
+
+    // 3. 比較対象の選択
+    var needsBoth = need > 0;
+    var compareReady = both && !!ui.selected.A && !!ui.selected.B;
+    if ((needsBoth || both) && !compareReady) {
+      var missingSides = ARMS.filter(function (arm) {
+        return rowsByArm[arm].length > 0 && !ui.selected[arm];
+      });
+      if (missingSides.length) {
+        count += missingSides.length;
+        reasons.push("比較する画像の選択が " + missingSides.length + " 件");
+      }
+    }
+
+    // 4. preference
+    if ((both || needsBoth) && !val("abPreference")) { count += 1; reasons.push("どちらが良いかが 1 件"); }
+
+    var enoughImages = !need || ARMS.every(function (arm) { return rowsByArm[arm].length >= need; });
+    return {
+      rowsByArm: rowsByArm, present: present, both: both, need: need,
+      count: count, reasons: reasons, enoughImages: enoughImages, compareReady: compareReady
+    };
+  }
+
+  function renderFlow() {
+    var g = flowGaps();
+    var absent = ARMS.filter(function (arm) { return g.rowsByArm[arm].length === 0; })
       .map(function (arm) { return arm + " の画像がまだありません"; });
 
     var btn = el("abSaveNext");
-    var imageCount = rowsByArm.A.length + rowsByArm.B.length;
+    var imageCount = g.rowsByArm.A.length + g.rowsByArm.B.length;
     if (btn) {
-      btn.textContent = both ? ("全" + imageCount + "枚の評価と比較を保存して次へ")
-        : present.length === 1 ? (present[0] + " の全画像評価を保存する")
-          : "画像を置いてください";
+      btn.textContent = (g.need && !g.enoughImages)
+        ? ("A/B それぞれ " + g.need + " 枚の評価が必要です")
+        : g.both ? ("全" + imageCount + "枚の評価と比較を保存して次へ")
+          : g.present.length === 1 ? (g.present[0] + " の全画像評価を保存する")
+            : "画像を置いてください";
     }
-    var ready = present.length > 0 && !blocking.length;
+    var ready = g.present.length > 0 && g.count === 0 && g.enoughImages;
     disable("abSaveNext", !ready);
     setText("abFlowState", ready
-      ? (both ? "A/B の評価と比較を保存できます。"
-        : present[0] + " の評価だけを保存します（片側だけの記録も有効です。順位や採用の意味は持ちません）。")
-      : blocking.concat(absent).join(" / "));
-    disable("abPreference", !both);
+      ? (g.both ? "A/B の評価と比較を保存できます。"
+        : g.present[0] + " の評価だけを保存します（片側だけの記録も有効です。順位や採用の意味は持ちません）。")
+      : g.count
+        ? ("未入力 " + g.count + " 件 — " + g.reasons.join(" / "))
+        : absent.join(" / "));
+    disable("abPreference", !g.both);
   }
 
   function renderComparisonState() {
@@ -2771,6 +3017,8 @@
     ui.selected.A = "";
     ui.selected.B = "";
     releaseAllPreviews();
+    // 重要要素はケースごとに違う。入力を載せ直す前に行を作り替える。
+    ARMS.forEach(syncPriorityForm);
     ARMS.forEach(clearReviewInputs);
     setVal("abPreference", "");
     setVal("abCompareNotes", "");
@@ -2966,7 +3214,7 @@
     if (!present.length) { status("先に画像を置いてください。"); return; }
     for (var i = 0; i < present.length; i += 1) {
       var missing = rowsByArm[present[i]].filter(function (r) {
-        return !reviewValuesReady(reviewValuesFor(r.imageId));
+        return !reviewValuesReady(reviewValuesFor(r.imageId), ui.sourceNo);
       }).length;
       if (missing) {
         status(present[i] + " の未評価画像が " + missing + " 枚あります。サムネイルを切り替えて評価してください。");
@@ -2975,6 +3223,12 @@
     }
     var both = present.length === 2;
     if (both && !val("abPreference")) { status("どちらが良いかを選んでください。"); return; }
+    // 必要枚数・比較対象を宣言したパッケージでは、揃うまで保存させない。
+    var gaps = flowGaps();
+    if (gaps.count || !gaps.enoughImages) {
+      status("未入力 " + gaps.count + " 件 — " + gaps.reasons.join(" / "));
+      return;
+    }
 
     present.forEach(function (arm) {
       rowsByArm[arm].forEach(function (row) {
@@ -2985,7 +3239,7 @@
         ((db.pkg && db.pkg.policy.scoreKeys) || []).forEach(function (k) {
           scores[k] = parseInt(input.scores[k], 10);
         });
-        db.reviews.push({
+        var saved = {
           reviewId: makeId("abrev"),
           imageId: row.imageId,
           verdict: input.verdict,
@@ -2994,7 +3248,11 @@
           notes: input.notes || "",
           supersedes: tip.active ? tip.active.reviewId : null,
           ts: nowIso()
-        });
+        };
+        // 優先項目を宣言したパッケージのときだけ足す後方互換の追加項目。
+        var checks = priorityChecksFromValues(input, ui.sourceNo);
+        if (checks.length) saved.priorityChecks = checks;
+        db.reviews.push(saved);
         delete db.reviewDrafts[row.imageId];
       });
     });
@@ -3087,16 +3345,27 @@
           images: rows.map(function (r) {
             var tip = activeReviewFor(r.imageId);
             var rev = tip.active;
+            var evaluation = rev ? {
+              verdict: rev.verdict,
+              aestheticSatisfaction: String(rev.scores.aestheticSatisfaction),
+              intentMatch: String(rev.scores.intentMatch),
+              failures: (rev.failures || []).slice()
+            } : { verdict: "", aestheticSatisfaction: "", intentMatch: "", failures: [] };
+            // 後方互換の追加項目。優先項目を持つ記録にだけ出す。
+            // unclear は missing へ換算しない(数えるのは status=missing だけ)。
+            if (rev && Array.isArray(rev.priorityChecks) && rev.priorityChecks.length) {
+              evaluation.priorityChecks = rev.priorityChecks.map(function (pc) {
+                return { itemId: pc.itemId, status: String(pc.status || "") };
+              });
+              evaluation.missingPriorityCount = rev.priorityChecks.filter(function (pc) {
+                return pc && pc.status === "missing";
+              }).length;
+            }
             return {
               imageId: r.imageId,
               rank: r.rank,
               metadata: r.metadata,
-              evaluation: rev ? {
-                verdict: rev.verdict,
-                aestheticSatisfaction: String(rev.scores.aestheticSatisfaction),
-                intentMatch: String(rev.scores.intentMatch),
-                failures: (rev.failures || []).slice()
-              } : { verdict: "", aestheticSatisfaction: "", intentMatch: "", failures: [] },
+              evaluation: evaluation,
               notes: rev ? (rev.notes || "") : ""
             };
           }),
@@ -3109,8 +3378,8 @@
             armRole: c.arms[arm].role,
             baselineGenerationId: c.baselineGenerationId,
             treatmentApplied: !!c.arms[arm].treatmentApplied,
-            insertText: arm === "B" ? db.pkg.experiment.insertText : "",
-            insertOffset: arm === "B" ? c.arms.B.insertOffset : null,
+            insertText: arm === "B" ? (db.pkg.experiment.insertText || "") : "",
+            insertOffset: arm === "B" && c.arms.B.insertOffset != null ? c.arms.B.insertOffset : null,
             promptSha256: c.arms[arm].promptSha256,
             baselinePromptSha256: c.baselinePromptSha256,
             generationConditions: cond ? {

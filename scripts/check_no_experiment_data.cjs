@@ -44,7 +44,12 @@ const FORBIDDEN_PHRASES = [
   "顔の融合を最優先",      // 実験の追加文の冒頭
   "彼女は人間ではなく",    // 伝承ブロックの開始行
   "伝承の意匠を忠実に",    // 伝承ブロックの本体行
-  "facial_fusion_ab"       // 実験ID / 凍結データセット名
+  "facial_fusion_ab",      // 実験ID / 凍結データセット名
+  // 視覚指示の優先順位実験。本文・実験ID・実際の優先項目のいずれも公開しない。
+  "visual_priority_conflict",             // 実験ID
+  "最優先に成立させる視覚要素",            // Treatment が入れる優先ブロックの見出し
+  "上記の最優先要素を損なわない範囲で",    // Treatment の競合弱化に使う固定句
+  "VPC-T1"                                 // 処理定義ID
 ];
 FORBIDDEN_PHRASES.forEach(function (phrase) {
   check("実験固有の語 '" + phrase + "' を公開ファイルへ置いていない", others.indexOf(phrase) < 0);
@@ -128,6 +133,20 @@ check("R3-FB の保存形式を維持している",
 check("A/B の保存先が既存レビューと分かれている",
   indexHtml.indexOf("personaGenerator.abExperiment.v1") > 0
   && indexHtml.indexOf("personaGeneratorAbImages") > 0);
+// 5. 優先項目チェックは「器」だけを持つ。項目の中身はパッケージから読む。
+check("優先項目チェックの器がある",
+  indexHtml.indexOf("priorityChecksRequired") > 0
+  && indexHtml.indexOf("priorityItems") > 0
+  && indexHtml.indexOf("重要要素の反映") > 0);
+check("優先項目の3択の保存値を持つ",
+  indexHtml.indexOf('"present"') > 0 && indexHtml.indexOf('"missing"') > 0
+  && indexHtml.indexOf('"unclear"') > 0);
+// 出荷物(index.html)は項目の中身を持たず、読み込んだパッケージの label をそのまま出す。
+// (検査スクリプトの合成フィクスチャは公開UIではないので対象外)
+check("優先項目の短文はパッケージから読む(出荷物へ項目配列を埋め込まない)",
+  indexHtml.indexOf("it.label") > 0 && !/priorityItems\s*[:=]\s*\[\s*\{/.test(indexHtml));
+check("優先項目は画面へ内部IDやハッシュを出さない",
+  indexHtml.indexOf("clauseSha256") < 0);
 
 console.log(`OK: 公開内容の検査 ${checks} 件を実行（追跡ファイル ${tracked.length} 件）`);
 console.log(ok ? "PASS" : "FAIL");
