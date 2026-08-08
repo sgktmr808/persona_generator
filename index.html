@@ -662,7 +662,7 @@
           <option value="tie">引き分け</option>
         </select>
         <label class="field-label" for="abCompareNotes">比較コメント</label>
-        <textarea id="abCompareNotes" rows="2" placeholder="顔の意匠が明確になったか／美貌を損なう過剰変形はないか"></textarea>
+        <textarea id="abCompareNotes" rows="2" placeholder="AとBの違い、美的満足度、意図の反映について記録"></textarea>
         <div class="row">
           <button id="abSaveNext" class="grow primary" type="button" disabled>この比較を保存して次へ</button>
         </div>
@@ -2285,6 +2285,73 @@
       }
     });
 
+    // 優先項目チェックを求めるパッケージは、意味の面まで検査する。
+    //  ここを通らないものは作業台へ載せない。壊れた項目を黙って捨てて続行しない
+    //  (捨てると「全項目に答えた」が実際には項目が欠けている状態で成立してしまう)。
+    if (pkg.policy && pkg.policy.priorityChecksRequired === true) {
+      var need = pkg.policy.requiredImagesPerArm;
+      var maxPerArm = typeof pkg.policy.maxImagesPerArm === "number" ? pkg.policy.maxImagesPerArm : 5;
+      if (typeof need !== "number" || !isFinite(need) || need <= 0 || Math.floor(need) !== need) {
+        errors.push({
+          field: "policy.requiredImagesPerArm",
+          reason: "重要要素の記録を求めるときは1以上の整数が必要（今は " + JSON.stringify(need) + "）"
+        });
+      } else if (need > maxPerArm) {
+        errors.push({
+          field: "policy.requiredImagesPerArm",
+          reason: "必要枚数 " + need + " が上限 " + maxPerArm + " を超えている"
+        });
+      }
+      if (pkg.policy.priorityStatuses !== undefined) {
+        var wantStatuses = PRIORITY_STATUS_VALUES.slice().sort().join(" / ");
+        var gotStatuses = Array.isArray(pkg.policy.priorityStatuses)
+          ? pkg.policy.priorityStatuses.map(function (v) { return String(v); }).slice().sort().join(" / ")
+          : null;
+        if (gotStatuses !== wantStatuses) {
+          errors.push({
+            field: "policy.priorityStatuses",
+            reason: "この画面が保存できるのは " + wantStatuses + " だけ（今は "
+              + (gotStatuses === null ? "配列でない" : gotStatuses) + "）"
+          });
+        }
+      }
+      pkg.cases.forEach(function (c, i) {
+        var at = "cases[" + i + "].priorityItems";
+        var items = c && c.priorityItems;
+        if (!Array.isArray(items) || !items.length) {
+          errors.push({ field: at, reason: "重要要素の項目が無い（1件以上必要）" });
+          return;
+        }
+        var seen = Object.create(null);
+        items.forEach(function (it, k) {
+          var where = at + "[" + k + "]";
+          if (!it || typeof it !== "object" || Array.isArray(it)) {
+            errors.push({ field: where, reason: "項目がオブジェクトでない" });
+            return;
+          }
+          var id = typeof it.itemId === "string" ? it.itemId.trim() : "";
+          var label = typeof it.label === "string" ? it.label.trim() : "";
+          if (!id) errors.push({ field: where + ".itemId", reason: "空（項目の識別子が必要）" });
+          if (!label) errors.push({ field: where + ".label", reason: "空（画面へ出す短文が必要）" });
+          if (id) {
+            if (seen[id]) errors.push({ field: where + ".itemId", reason: "同じケース内で重複している: " + id });
+            seen[id] = true;
+          }
+          if (it.clauseSha256 !== undefined) {
+            if (typeof it.clauseSha256 !== "string" || !/^[0-9a-f]{64}$/.test(it.clauseSha256)) {
+              errors.push({ field: where + ".clauseSha256", reason: "SHA-256 の形式でない" });
+            } else if (label) {
+              checks.push(sha256Text(it.label).then(function (hex) {
+                if (hex === null) return null;
+                return hex === it.clauseSha256 ? null
+                  : { field: where + ".clauseSha256", reason: "短文のSHA-256と一致しない" };
+              }));
+            }
+          }
+        });
+      });
+    }
+
     return Promise.all(checks).then(function (results) {
       results.forEach(function (r) { if (r) errors.push(r); });
       return errors.length ? { ok: false, errors: errors } : { ok: true };
@@ -2418,6 +2485,17 @@
     { value: "missing", label: "欠けている" },
     { value: "unclear", label: "判断困難" }
   ];
+  var PRIORITY_STATUS_VALUES = PRIORITY_STATUSES.map(function (s) { return s.value; });
+
+  // 画面の案内文。実験固有の語をこのファイルへ書かず、パッケージが持つときだけ差し替える。
+  function packageText(key, fallback) {
+    var v = db.pkg && db.pkg.policy ? db.pkg.policy[key] : null;
+    return typeof v === "string" && v ? v : fallback;
+  }
+  function applyPackageText() {
+    var node = el("abCompareNotes");
+    if (node) node.placeholder = packageText("compareNotesPlaceholder", "AとBの違い、美的満足度、意図の反映について記録");
+  }
 
   function priorityRequired() {
     return !!(db.pkg && db.pkg.policy && db.pkg.policy.priorityChecksRequired === true);
@@ -2432,20 +2510,20 @@
     db.pkg.cases.forEach(function (c) { if (c.sourceNo === sourceNo) found = c; });
     return found;
   }
+  // 読み込み時に verifyPackage が全項目の形を検査済み。ここで黙って間引かない
+  // (間引くと、欠けた項目に答えないまま「全項目に答えた」が成立してしまう)。
   function priorityItemsFor(sourceNo) {
     if (!priorityRequired()) return [];
     var c = caseBySourceNo(sourceNo);
-    var items = c && Array.isArray(c.priorityItems) ? c.priorityItems : [];
-    return items.filter(function (it) {
-      return it && typeof it.itemId === "string" && it.itemId && typeof it.label === "string" && it.label;
-    });
+    return c && Array.isArray(c.priorityItems) ? c.priorityItems : [];
   }
 
   // 表示中のケースに合わせて項目行を作り直す。項目が同じなら何もしない
   // (入力中の値を消さないため)。作り直したときだけ true を返す。
   var priorityFormSignature = { A: null, B: null };
   function priorityFormSig(items) {
-    return items.map(function (it) { return it.itemId + "" + it.label; }).join("");
+    // 制御文字は使わない。JSON表現なら区切りが可視で、値に何が入っても曖昧にならない。
+    return JSON.stringify(items.map(function (it) { return [String(it.itemId), String(it.label)]; }));
   }
   function syncPriorityForm(arm) {
     var items = priorityItemsFor(ui.sourceNo);
@@ -2591,7 +2669,8 @@
     var notes = document.createElement("textarea");
     notes.id = reviewFieldId(arm, "notes");
     notes.rows = 2;
-    notes.placeholder = "コメント（解剖破綻・CG感・別個体化・仮面化・衣装化など）";
+    // 案内文は実験に依存させない。パッケージが人間向けの文言を持つときだけそれを使う。
+    notes.placeholder = packageText("imageNotesPlaceholder", "コメント（気づいた点を自由に記録）");
     labeled("コメント", notes);
 
     function keepDraft() {
@@ -2964,6 +3043,7 @@
     show("abWorkbench", !needsSetup);
     if (needsSetup) { renderSetup(); return; }
     if (ui.sourceNo == null && db.pkg.cases.length) ui.sourceNo = db.pkg.cases[0].sourceNo;
+    applyPackageText();
     renderHeader();
     ARMS.forEach(renderSide);
     renderFlow();
@@ -3316,6 +3396,40 @@
       + "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
   }
 
+  // ---------------------------------------------------------------------------
+  // 書き出しの名前。実験名をこのファイルへ焼き込まず、検証済みの experimentId から作る。
+  //  ただし顔融合パッケージ(persona-facial-fusion-ab.v1 を書き出し先に持つもの)は、
+  //  既に配布済みの記録と突き合わせられるよう従来の名前とIDをそのまま使う。
+  // ---------------------------------------------------------------------------
+  var LEGACY_EXPORT_SCHEMA = "persona-facial-fusion-ab.v1";
+  function usesLegacyExportNames() {
+    return !!(db.pkg && db.pkg.exportTargets
+      && db.pkg.exportTargets.experimentSchemaVersion === LEGACY_EXPORT_SCHEMA);
+  }
+  // ファイル名・記録IDへ入れて安全な形へ畳む(英数字と - _ . 以外は - にする)。
+  function experimentSlug() {
+    var id = String((db.pkg && db.pkg.experiment && db.pkg.experiment.experimentId) || "");
+    var slug = id.replace(/[^0-9A-Za-z._-]+/g, "-").replace(/-{2,}/g, "-").replace(/^[-._]+|[-._]+$/g, "");
+    return slug || "experiment";
+  }
+  function exportBaseName(kind) {
+    if (usesLegacyExportNames()) {
+      return kind === "reviews" ? "facial-fusion-ab-reviews"
+        : kind === "comparisons" ? "facial-fusion-ab-comparisons"
+          : "facial-fusion-ab-image-copy-list";
+    }
+    var slug = experimentSlug();
+    return kind === "reviews" ? slug + "-reviews"
+      : kind === "comparisons" ? slug + "-comparisons"
+        : slug + "-image-copy-list";
+  }
+  function reviewRowId(sourceNo, arm) {
+    var head = usesLegacyExportNames()
+      ? "ffrev-" + db.pkg.experiment.experimentId
+      : experimentSlug() + "-rev";
+    return head + "-p" + sourceNo + "-" + arm;
+  }
+
   function buildReviewRows() {
     var out = [];
     var ts = nowIso();
@@ -3329,7 +3443,7 @@
         var pickedHere = rows.some(function (r) { return r.imageId === picked; }) ? picked : "";
         out.push({
           schemaVersion: db.pkg.exportTargets.reviewSchemaVersion,
-          reviewId: "ffrev-" + db.pkg.experiment.experimentId + "-p" + c.sourceNo + "-" + arm,
+          reviewId: reviewRowId(c.sourceNo, arm),
           createdAt: rows[0].ts,
           updatedAt: ts,
           generationId: c.arms[arm].generationId,
@@ -3457,17 +3571,17 @@
     if (kind === "reviews") {
       rows = buildReviewRows();
       text = toJsonl(rows);
-      name = "facial-fusion-ab-reviews_" + stamp() + ".jsonl";
+      name = exportBaseName("reviews") + "_" + stamp() + ".jsonl";
       mime = "application/x-ndjson;charset=utf-8";
     } else if (kind === "comparisons") {
       rows = buildComparisonRows();
       text = toJsonl(rows);
-      name = "facial-fusion-ab-comparisons_" + stamp() + ".jsonl";
+      name = exportBaseName("comparisons") + "_" + stamp() + ".jsonl";
       mime = "application/x-ndjson;charset=utf-8";
     } else {
       text = buildCopyList();
       rows = text.split("\n").filter(function (l) { return l; }).slice(1);
-      name = "facial-fusion-ab-image-copy-list_" + stamp() + ".tsv";
+      name = exportBaseName("copy-list") + "_" + stamp() + ".tsv";
       mime = "text/tab-separated-values;charset=utf-8";
     }
     if (!rows.length) { status("書き出す記録がまだありません。"); return; }

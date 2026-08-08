@@ -187,7 +187,8 @@ function buildLegacyPackage() {
       failureCodes: ["composition", "anatomy", "other"], preferences: ["A", "B", "tie"],
       seedSupport: ["supported", "unsupported"], adoptionDecision: "not-applicable", rankImpliesAdoption: false
     },
-    exportTargets: { reviewSchemaVersion: "persona-prompt-review.v2", experimentSchemaVersion: "persona-fixture-ab.v1" },
+    // 既存の顔融合パッケージと同じ書き出し先。従来のファイル名・記録IDが保たれること。
+    exportTargets: { reviewSchemaVersion: "persona-prompt-review.v2", experimentSchemaVersion: "persona-facial-fusion-ab.v1" },
     cases
   };
   body.definitionSha256 = sha(definitionText(body));
@@ -238,6 +239,9 @@ function buildPriorityPackage() {
       arms: [{ id: "A", role: "control", label: "A 合成" }, { id: "B", role: "treatment", label: "B 合成" }],
       maxImagesPerArm: 2, requiredImagesPerArm: 2, priorityChecksRequired: true,
       priorityStatuses: ["present", "missing", "unclear"],
+      // 画面の案内文はパッケージ側が持つ(公開UIへ実験固有の語を置かないため)
+      compareNotesPlaceholder: "合成の比較案内文（AとBの違いを記録）",
+      imageNotesPlaceholder: "合成の画像コメント案内文",
       verdicts: ["accept", "hold", "reject"],
       scoreKeys: ["aestheticSatisfaction", "intentMatch"], scoreMin: 1, scoreMax: 5,
       failureCodes: ["composition", "anatomy", "other"], preferences: ["A", "B", "tie"],
@@ -249,6 +253,42 @@ function buildPriorityPackage() {
   body.definitionSha256 = sha(definitionText(body));
   body.integrity = { algorithm: "sha256", value: sha(JSON.stringify(body)) };
   return body;
+}
+
+// 改ざんではなく「意味が壊れた」パッケージ。integrity と definitionSha256 は
+// 正しく計算し直すので、拒否できるのは意味の検査を持っている場合だけ。
+function derive(base, mutate) {
+  const next = JSON.parse(JSON.stringify(base));
+  mutate(next);
+  delete next.definitionSha256;
+  delete next.integrity;
+  next.definitionSha256 = sha(definitionText(next));
+  next.integrity = { algorithm: "sha256", value: sha(JSON.stringify(next)) };
+  return next;
+}
+function buildInvalidPackages(base) {
+  return [
+    { label: "priorityItems欠落", field: "priorityItems",
+      pkg: derive(base, (p) => { delete p.cases[0].priorityItems; }) },
+    { label: "priorityItems空配列", field: "priorityItems",
+      pkg: derive(base, (p) => { p.cases[0].priorityItems = []; }) },
+    { label: "itemId重複", field: "itemId",
+      pkg: derive(base, (p) => { p.cases[0].priorityItems[1].itemId = p.cases[0].priorityItems[0].itemId; }) },
+    { label: "label空", field: "label",
+      pkg: derive(base, (p) => { p.cases[0].priorityItems[1].label = "   "; }) },
+    { label: "itemId空", field: "itemId",
+      pkg: derive(base, (p) => { p.cases[0].priorityItems[2].itemId = ""; }) },
+    { label: "clauseSha256不一致", field: "clauseSha256",
+      pkg: derive(base, (p) => { p.cases[0].priorityItems[0].clauseSha256 = sha("別の文字列"); }) },
+    { label: "requiredImagesPerArmがmaxImagesPerArm超過", field: "requiredImagesPerArm",
+      pkg: derive(base, (p) => { p.policy.requiredImagesPerArm = p.policy.maxImagesPerArm + 1; }) },
+    { label: "requiredImagesPerArmが正の整数でない", field: "requiredImagesPerArm",
+      pkg: derive(base, (p) => { p.policy.requiredImagesPerArm = 0; }) },
+    { label: "未対応priority status", field: "priorityStatuses",
+      pkg: derive(base, (p) => { p.policy.priorityStatuses = ["present", "missing", "unclear", "maybe"]; }) },
+    { label: "2件目のケースの項目が壊れている", field: "priorityItems",
+      pkg: derive(base, (p) => { p.cases[1].priorityItems = null; }) }
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +363,7 @@ const PRELUDE = `
     input.files = dt.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
   };
+  let lastExportStatus = "";
   const exportRows = async (id) => {
     const orig = URL.createObjectURL;
     let captured = null;
@@ -330,9 +371,17 @@ const PRELUDE = `
     byId("abStatus").textContent = "";
     byId(id).click();
     await waitS(/書き出しました/, "export " + id);
+    lastExportStatus = st();
     const text = await captured.text();
     URL.createObjectURL = orig;
     return text.trim().split("\\n").map((l) => JSON.parse(l));
+  };
+  const loadAndExpectRejected = async (pkg, name, label) => {
+    byId("abPackageStatus").textContent = "";
+    loadPkg(pkg, name);
+    await waitFor(() => /使えません|読み込みました|中止しました|記録はそのまま/.test(byId("abPackageStatus").textContent),
+      "verdict for " + label);
+    return byId("abPackageStatus").textContent;
   };
 `;
 
@@ -350,9 +399,15 @@ function phaseLegacy(pkg) {
     byId("abSetupChatgpt").click();
     await waitFor(() => byId("abWorkbench").hidden === false, "workbench");
 
+    // 案内文が実験固有の語に依存していない(パッケージが文言を持たないので汎用文)
+    note(byId("abCompareNotes").placeholder === "AとBの違い、美的満足度、意図の反映について記録",
+      "比較コメントの汎用案内が出ていない: " + byId("abCompareNotes").placeholder);
+
     await pickImage("A", "legacy-a1.png", 11);
     note(byId("abRevA_priorityHead").hidden === true, "宣言が無いのに『重要要素の反映』の見出しが出ている");
     note(prioRows("A").length === 0, "宣言が無いのに優先項目の行が出ている");
+    note(byId("abRevA_notes").placeholder === "コメント（気づいた点を自由に記録）",
+      "画像コメントの汎用案内が出ていない: " + byId("abRevA_notes").placeholder);
 
     // 従来どおり片側だけでも保存でき、preference も不要
     reviewSide("A", "hold", "3", "2", "従来の記録");
@@ -390,7 +445,23 @@ function phaseLegacy(pkg) {
     note(store().reviews.every((r) => !("priorityChecks" in r)),
       "宣言が無いのに保存行へ priorityChecks が入っている");
 
-    return { pass: problems.length === 0, problems, legacyReviews: store().reviews.length };
+    // 顔融合パッケージは従来のファイル名・記録IDのまま
+    note(/書き出しました: facial-fusion-ab-reviews_\d{8}-\d{6}\.jsonl/.test(lastExportStatus),
+      "従来のレビュー書き出し名が変わっている: " + lastExportStatus);
+    note(rowA.reviewId === "ffrev-" + p.experiment.experimentId + "-p" + p.cases[0].sourceNo + "-A"
+      && rowB.reviewId === "ffrev-" + p.experiment.experimentId + "-p" + p.cases[0].sourceNo + "-B",
+      "従来の記録IDが変わっている: " + rowA.reviewId + " / " + rowB.reviewId);
+    await exportRows("abExportComparisons");
+    note(/書き出しました: facial-fusion-ab-comparisons_\d{8}-\d{6}\.jsonl/.test(lastExportStatus),
+      "従来の比較書き出し名が変わっている: " + lastExportStatus);
+    byId("abStatus").textContent = "";
+    byId("abExportCopyList").click();
+    await waitS(/書き出しました/, "legacy copy list");
+    note(/書き出しました: facial-fusion-ab-image-copy-list_\d{8}-\d{6}\.tsv/.test(st()),
+      "従来のコピーリスト名が変わっている: " + st());
+
+    return { pass: problems.length === 0, problems, legacyReviews: store().reviews.length,
+      legacyReviewId: rowA.reviewId };
   })(__ARG__);
 }
 
@@ -406,6 +477,10 @@ function phasePriorityLoad(pkg) {
     byId("abSetupChatgpt").click();
     await waitFor(() => byId("abWorkbench").hidden === false, "workbench");
 
+    // 案内文はパッケージ側の文言を使う
+    note(byId("abCompareNotes").placeholder === p.policy.compareNotesPlaceholder,
+      "比較コメントの案内がパッケージ由来でない: " + byId("abCompareNotes").placeholder);
+
     // 空状態: 画像が無くても未入力の内訳が日本語で出る
     note(/未入力 \d+ 件/.test(byId("abFlowState").textContent),
       "空状態で未入力件数が出ていない: " + byId("abFlowState").textContent);
@@ -413,6 +488,8 @@ function phasePriorityLoad(pkg) {
       "必要枚数が案内されていない: " + byId("abFlowState").textContent);
 
     await pickImage("A", "p-a1.png", 21);
+    note(byId("abRevA_notes").placeholder === p.policy.imageNotesPlaceholder,
+      "画像コメントの案内がパッケージ由来でない: " + byId("abRevA_notes").placeholder);
     note(byId("abRevA_priorityHead").hidden === false, "『重要要素の反映』の見出しが出ていない");
     note(byId("abRevA_priorityHead").textContent === "重要要素の反映",
       "見出しの文言が違う: " + byId("abRevA_priorityHead").textContent);
@@ -617,12 +694,27 @@ function phaseReloadSaveExport(arg) {
     note(rowA.experiment.adoptionDecision === "not-applicable", "採用判定外でない");
     note(rowA.experiment.insertText === "" && rowA.experiment.insertOffset === null,
       "1文挿入型でないのに insertText/insertOffset が出ている");
+    // 書き出し名と記録IDは experimentId 由来の slug。旧実験名を引かない。
+    note(/書き出しました: fixture-priority-reviews_\d{8}-\d{6}\.jsonl/.test(lastExportStatus),
+      "新形式のレビュー書き出し名になっていない: " + lastExportStatus);
+    note(lastExportStatus.indexOf("facial-fusion-ab") < 0, "新形式なのに旧実験名が出ている: " + lastExportStatus);
+    note(rowA.reviewId === "fixture-priority-rev-p1-A" && rowB.reviewId === "fixture-priority-rev-p1-B",
+      "新形式の記録IDになっていない: " + rowA.reviewId + " / " + rowB.reviewId);
+    note(rows.every((r) => r.reviewId.indexOf("ffrev-") !== 0), "新形式なのに ffrev- が残っている");
+
     const cmpRows = await exportRows("abExportComparisons");
     note(cmpRows.length === 1 && !("priorityChecks" in cmpRows[0]),
       "比較JSONLの既存キーが変わっている");
     note(cmpRows[0].adoptionDecision === "not-applicable", "比較が採用判定外でない");
+    note(/書き出しました: fixture-priority-comparisons_\d{8}-\d{6}\.jsonl/.test(lastExportStatus),
+      "新形式の比較書き出し名になっていない: " + lastExportStatus);
+    byId("abStatus").textContent = "";
+    byId("abExportCopyList").click();
+    await waitS(/書き出しました/, "copy list");
+    note(/書き出しました: fixture-priority-image-copy-list_\d{8}-\d{6}\.tsv/.test(st()),
+      "新形式のコピーリスト名になっていない: " + st());
 
-    return { pass: problems.length === 0, problems, exported: all.length };
+    return { pass: problems.length === 0, problems, exported: all.length, reviewId: rowA.reviewId };
   })(__ARG__);
 }
 
@@ -683,6 +775,46 @@ function phaseLayout(spec) {
       note(r.width > 0 && r.height >= 44, label + " の " + id + " が44px未満");
     });
     return { pass: problems.length === 0, problems, label, overflow, vw, items: rows.length };
+  })(__ARG__);
+}
+
+// ---------------------------------------------------------------------------
+// 意味の壊れた優先項目パッケージは、作業台へ反映せず日本語で理由を出す
+// ---------------------------------------------------------------------------
+function phaseRejectInvalid(arg) {
+  return (async (a) => {
+    __PRELUDE__
+    window.confirm = () => { problems.push("拒否すべきパッケージで確認ダイアログが出た"); return false; };
+    const before = {
+      prompt: byId("abPromptA").value,
+      items: prioRows("A").length,
+      images: store().images.length,
+      reviews: store().reviews.length,
+      pkgId: store().pkg.experiment.experimentId,
+      defSha: store().pkg.definitionSha256
+    };
+    const seen = [];
+    for (const bad of a.invalid) {
+      const text = await loadAndExpectRejected(bad.pkg, "invalid.json", bad.label);
+      seen.push(bad.label + " => " + text.slice(0, 90));
+      note(/使えません/.test(text), bad.label + " が拒否されなかった: " + text);
+      note(text.indexOf(bad.field) >= 0, bad.label + " の理由に " + bad.field + " が出ていない: " + text);
+      // 英語のスタックや undefined ではなく、日本語の説明であること
+      note(/[ぁ-んァ-ヶ一-龥]/.test(text.replace(/^[^:]*:/, "")),
+        bad.label + " の理由が日本語でない: " + text);
+      note(text.indexOf("undefined") < 0 || bad.field === "requiredImagesPerArm",
+        bad.label + " の理由に undefined が出ている: " + text);
+      // 作業台は前のパッケージのまま
+      note(byId("abWorkbench").hidden === false, bad.label + " で作業台が消えた");
+      note(byId("abPromptA").value === before.prompt, bad.label + " で本文が差し替わった");
+      note(prioRows("A").length === before.items, bad.label + " で優先項目が差し替わった");
+      const now = store();
+      note(now.pkg.experiment.experimentId === before.pkgId && now.pkg.definitionSha256 === before.defSha,
+        bad.label + " で保存済みパッケージが差し替わった");
+      note(now.images.length === before.images && now.reviews.length === before.reviews,
+        bad.label + " で記録が変わった");
+    }
+    return { pass: problems.length === 0, problems, count: a.invalid.length, seen };
   })(__ARG__);
 }
 
@@ -817,6 +949,8 @@ async function main() {
       { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
     await wait(500);
 
+    const rejected = await run(phaseRejectInvalid, "invalid priority packages refused",
+      { invalid: buildInvalidPackages(priorityPkg) });
     await run(phaseErrorState, "tampered package error state", { tampered });
 
     console.log("R3-FD PRIORITY CHECK BROWSER ACCEPTANCE PASSED");
@@ -826,6 +960,9 @@ async function main() {
     console.log(`  reload restored every image's inputs; save wrote priorityChecks on all 4 reviews`);
     console.log(`  export matched: ${exported.exported} images, ${exported.exported} evaluations, ${exported.exported} priorityChecks sets; unclear never counted as missing`);
     console.log(`  layout (${layoutResults.length} passes): ${layoutResults.map((r) => `${r.vw}px/${r.items}items overflow ${r.overflow}px`).join(" | ")}`);
+    console.log(`  legacy export names kept: ${legacy.legacyReviewId} / facial-fusion-ab-*`);
+    console.log(`  new export names derived from experimentId: ${exported.reviewId} / fixture-priority-*`);
+    console.log(`  ${rejected.count} semantically invalid priority packages refused with a Japanese reason, workbench untouched`);
     console.log(`  tampered package refused without breaking the workbench`);
   } finally {
     if (client) client.close();

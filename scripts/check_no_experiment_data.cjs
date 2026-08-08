@@ -145,8 +145,26 @@ check("優先項目の3択の保存値を持つ",
 // (検査スクリプトの合成フィクスチャは公開UIではないので対象外)
 check("優先項目の短文はパッケージから読む(出荷物へ項目配列を埋め込まない)",
   indexHtml.indexOf("it.label") > 0 && !/priorityItems\s*[:=]\s*\[\s*\{/.test(indexHtml));
-check("優先項目は画面へ内部IDやハッシュを出さない",
-  indexHtml.indexOf("clauseSha256") < 0);
+// ハッシュは読み込み時の照合にだけ使い、画面へは出さない。
+check("優先項目のハッシュは照合専用（画面へ出さない）",
+  /短文のSHA-256と一致しない/.test(indexHtml)
+  && !/textContent\s*=[^;\n]*clauseSha256/.test(indexHtml)
+  && !/appendChild\([^)]*clauseSha256/.test(indexHtml));
+check("優先項目パッケージの意味を読み込み時に検査する",
+  indexHtml.indexOf("requiredImagesPerArm") > 0
+  && /policy\.priorityStatuses/.test(indexHtml)
+  && /同じケース内で重複/.test(indexHtml));
+// 6. 不可視な制御文字を残さない。目で追えない差分やコピー事故のもとになる。
+//    改行(0x0A)とタブ(0x09)だけを許し、それ以外の C0 と DEL は禁止する。
+const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+tracked.filter(function (f) { return f !== SELF && /\.(html|js|cjs|mjs|json|md)$/.test(f); })
+  .forEach(function (f) {
+    let text = "";
+    try { text = fs.readFileSync(path.join(ROOT, f), "utf8"); } catch (_) { return; }
+    const at = text.search(CONTROL_CHARS);
+    check("不要な制御文字を含まない: " + f, at < 0,
+      at < 0 ? "" : "位置 " + at + " に U+" + text.charCodeAt(at).toString(16).toUpperCase().padStart(4, "0"));
+  });
 
 console.log(`OK: 公開内容の検査 ${checks} 件を実行（追跡ファイル ${tracked.length} 件）`);
 console.log(ok ? "PASS" : "FAIL");
