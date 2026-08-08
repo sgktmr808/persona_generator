@@ -289,7 +289,9 @@
   #abProvider,
   #abModel,
   #abSeedSupport,
-  #abSeed { font-size: 16px; }
+  #abSeed,
+  #abPreference,
+  #abCompareNotes { font-size: 16px; }
   .ab-review-empty { opacity: .75; font-size: .9em; padding: 6px 0; }
   .ab-fail-grid { display: flex; flex-wrap: wrap; gap: 4px 6px; }
   /* 重要要素の反映。項目の文が長くても片側だけ崩れないよう、必ず折り返して縦に積む。 */
@@ -667,6 +669,7 @@
           <button id="abSaveNext" class="grow primary" type="button" disabled>この比較を保存して次へ</button>
         </div>
         <div id="abFlowState" class="sub"></div>
+        <p id="abDraftNotice" class="sub ab-caution">比較の選択とコメントは、この端末に自動保存されます</p>
         <p class="sub ab-caution">順位・preference は観測記録です。採用判定としては扱いません。</p>
       </div>
 
@@ -2009,6 +2012,9 @@
     images: [],
     reviews: [],
     reviewDrafts: Object.create(null),
+    // ケースごとの「保存前の比較入力」。caseKey -> { controlImageId, treatmentImageId,
+    // preference, notes }。書き出しには出さず、完了判定にも使わない。
+    comparisonDrafts: Object.create(null),
     comparisons: [],
     invalidations: []
   };
@@ -2091,6 +2097,7 @@
         images: db.images,
         reviews: db.reviews,
         reviewDrafts: db.reviewDrafts,
+        comparisonDrafts: db.comparisonDrafts,
         comparisons: db.comparisons,
         invalidations: db.invalidations
       }));
@@ -2112,6 +2119,9 @@
       db.reviews = parsed.reviews || [];
       db.reviewDrafts = parsed.reviewDrafts && typeof parsed.reviewDrafts === "object"
         ? parsed.reviewDrafts : Object.create(null);
+      // comparisonDrafts は後方互換の追加項目。持たない既存記録は空で始める。
+      db.comparisonDrafts = parsed.comparisonDrafts && typeof parsed.comparisonDrafts === "object"
+        ? parsed.comparisonDrafts : Object.create(null);
       db.comparisons = parsed.comparisons || [];
       db.invalidations = parsed.invalidations || [];
       // R3-FB の記録には defaultCondition が無い。既存の condition 行から拾って引き継ぐ
@@ -2810,6 +2820,92 @@
     persist();
   }
 
+  // ---------------------------------------------------------------------------
+  // 比較の保存前入力(比較対象・preference・比較コメント)をケースごとに保持する。
+  //  画像ごとの評価と同じで、保存を押すまでの入力が移動や再読み込みで消えないようにする。
+  //  書き出し(レビューJSONL / 比較JSONL)には出さず、ケース完了の判定にも使わない。
+  // ---------------------------------------------------------------------------
+  function comparisonValuesFromRow(row) {
+    if (!row) return null;
+    return {
+      controlImageId: row.controlImageId || "",
+      treatmentImageId: row.treatmentImageId || "",
+      preference: row.preference || "",
+      notes: row.notes || ""
+    };
+  }
+  function currentComparisonValues() {
+    return {
+      controlImageId: ui.selected.A || "",
+      treatmentImageId: ui.selected.B || "",
+      preference: val("abPreference"),
+      notes: val("abCompareNotes")
+    };
+  }
+  function comparisonValuesEqual(a, b) {
+    if (!a || !b) return false;
+    return a.controlImageId === b.controlImageId && a.treatmentImageId === b.treatmentImageId
+      && String(a.preference || "") === String(b.preference || "")
+      && String(a.notes || "") === String(b.notes || "");
+  }
+  // 既定の比較対象。ケースを開いたときに自動で選ばれる画像。
+  function defaultSelectedImage(sourceNo, arm) {
+    var rows = activeImagesFor(sourceNo, arm);
+    return rows.length ? rows[rows.length - 1].imageId : "";
+  }
+  // 下書きを持つ意味があるかの基準。記録済みの比較があればそれ、無ければ自動選択の状態。
+  function comparisonBaseline(sourceNo) {
+    var tip = usableComparisonFor(sourceNo);
+    var saved = comparisonValuesFromRow(tip.active || tip.tip);
+    if (saved) return saved;
+    return {
+      controlImageId: defaultSelectedImage(sourceNo, "A"),
+      treatmentImageId: defaultSelectedImage(sourceNo, "B"),
+      preference: "",
+      notes: ""
+    };
+  }
+  // 無効化・削除された画像は復元しない。
+  function livingImageId(sourceNo, arm, imageId) {
+    if (!imageId) return "";
+    return activeImagesFor(sourceNo, arm).some(function (r) { return r.imageId === imageId; })
+      ? imageId : "";
+  }
+  function comparisonDraftFor(sourceNo) {
+    var d = db.comparisonDrafts[caseKeyOf(sourceNo)];
+    if (!d || typeof d !== "object") return null;
+    return {
+      controlImageId: livingImageId(sourceNo, "A", d.controlImageId),
+      treatmentImageId: livingImageId(sourceNo, "B", d.treatmentImageId),
+      preference: d.preference || "",
+      notes: d.notes || ""
+    };
+  }
+  function captureComparisonDraft() {
+    if (!db.pkg || ui.sourceNo == null || !el("abPreference")) return;
+    var key = caseKeyOf(ui.sourceNo);
+    var values = currentComparisonValues();
+    if (comparisonValuesEqual(values, comparisonBaseline(ui.sourceNo))) {
+      if (Object.prototype.hasOwnProperty.call(db.comparisonDrafts, key)) delete db.comparisonDrafts[key];
+      else return;   // 変化が無いなら書き込まない
+    } else {
+      db.comparisonDrafts[key] = {
+        caseKey: key,
+        sourceNo: ui.sourceNo,
+        controlImageId: values.controlImageId,
+        treatmentImageId: values.treatmentImageId,
+        preference: values.preference,
+        notes: values.notes,
+        ts: nowIso()
+      };
+    }
+    persist();
+  }
+  function dropComparisonDraft(sourceNo) {
+    var key = caseKeyOf(sourceNo);
+    if (Object.prototype.hasOwnProperty.call(db.comparisonDrafts, key)) delete db.comparisonDrafts[key];
+  }
+
   // 画像を切り替えても、保存前の入力を画像ごとに載せ直す。
   function prefillReview(arm) {
     var imageId = ui.selected[arm];
@@ -3092,7 +3188,11 @@
   // 操作
   // ---------------------------------------------------------------------------
   function goToCase(sourceNo) {
-    if (ui.sourceNo != null && ui.sourceNo !== sourceNo) ARMS.forEach(captureReviewDraft);
+    // ケースを離れる前に、画像ごとの評価と比較の入力を両方とも書き留める。
+    if (ui.sourceNo != null && ui.sourceNo !== sourceNo) {
+      ARMS.forEach(captureReviewDraft);
+      captureComparisonDraft();
+    }
     ui.sourceNo = sourceNo;
     ui.selected.A = "";
     ui.selected.B = "";
@@ -3107,10 +3207,18 @@
     var tip = usableComparisonFor(sourceNo);
     var head = tip.active || tip.tip;
     if (head) {
-      ui.selected.A = head.controlImageId || "";
-      ui.selected.B = head.treatmentImageId || "";
+      ui.selected.A = livingImageId(sourceNo, "A", head.controlImageId);
+      ui.selected.B = livingImageId(sourceNo, "B", head.treatmentImageId);
       setVal("abPreference", head.preference);
       setVal("abCompareNotes", head.notes || "");
+    }
+    // 保存前の下書きがあれば、記録済みの比較より優先して載せる。
+    var draft = comparisonDraftFor(sourceNo);
+    if (draft) {
+      ui.selected.A = draft.controlImageId;
+      ui.selected.B = draft.treatmentImageId;
+      setVal("abPreference", draft.preference);
+      setVal("abCompareNotes", draft.notes);
     }
     ARMS.forEach(function (arm) {
       if (ui.selected[arm]) return;
@@ -3147,6 +3255,12 @@
     if (!window.confirm("この画像を比較から外しますか？（記録は残り、書き出しには出ません）")) return;
     captureReviewDraft(arm);
     delete db.reviewDrafts[imageId];
+    // 外した画像を指したままの比較下書きを残さない。
+    var cd = db.comparisonDrafts[caseKeyOf(ui.sourceNo)];
+    if (cd) {
+      if (cd.controlImageId === imageId) cd.controlImageId = "";
+      if (cd.treatmentImageId === imageId) cd.treatmentImageId = "";
+    }
     db.invalidations.push({
       invalidationId: makeId("abinv"),
       imageId: imageId,
@@ -3160,6 +3274,7 @@
     // 残っている画像があればそれを選び直す。無ければ未選択に戻す。
     var rest = activeImagesFor(ui.sourceNo, arm);
     ui.selected[arm] = rest.length ? rest[rest.length - 1].imageId : "";
+    captureComparisonDraft();
     prefillReview(arm);
     // 比較がこの画像を指していたなら stale になり、ケースは未完了へ戻る。
     var tip = usableComparisonFor(ui.sourceNo);
@@ -3171,6 +3286,8 @@
   function selectImage(arm, imageId) {
     captureReviewDraft(arm);
     ui.selected[arm] = imageId || "";
+    // 比較対象を変えた時点で書き留める。
+    captureComparisonDraft();
     prefillReview(arm);
     render();
   }
@@ -3356,6 +3473,8 @@
         ts: nowIso()
       });
       savedComparison = true;
+      // 記録できたので、そのケースの比較下書きは役目を終える。
+      dropComparisonDraft(ui.sourceNo);
     }
     persist();
 
@@ -3599,6 +3718,7 @@
     releaseAllPreviews();
     db.conditions = []; db.images = []; db.reviews = [];
     db.reviewDrafts = Object.create(null);
+    db.comparisonDrafts = Object.create(null);
     db.comparisons = []; db.invalidations = [];
     // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
     // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。
@@ -3779,7 +3899,9 @@
       wireDropZone(arm);
     });
 
-    on("abPreference", "change", renderFlow);
+    // 比較の入力は、押した/打った時点で端末へ書き留める。
+    on("abPreference", "change", function () { captureComparisonDraft(); renderFlow(); });
+    on("abCompareNotes", "input", captureComparisonDraft);
     on("abSaveNext", "click", saveAndNext);
     on("abExportReviews", "click", function () { exportKind("reviews"); });
     on("abExportComparisons", "click", function () { exportKind("comparisons"); });

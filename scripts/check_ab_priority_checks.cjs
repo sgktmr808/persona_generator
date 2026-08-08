@@ -590,18 +590,20 @@ function phaseRetention() {
     byId("abPrev").click();
     await waitFor(() => /ケース 1 \/ 2/.test(byId("abCaseCounter").textContent), "back to case 1");
     note(prioRows("A").length === 3, "戻ったのに項目数がケース1でない: " + prioRows("A").length);
-    // ケースへ戻ると比較対象は最後の画像が選ばれる(既存挙動)。2枚目の入力が残っている。
-    await waitFor(() => byId("abRevA_notes").value === "A2", "case1 A2 restored");
-    note(getPrio("A", "P1") === "present" && getPrio("A", "P3") === "present",
-      "ケース移動後に2枚目の優先項目が消えた");
-    byId("abThumbsA").querySelectorAll("img")[0].click();
-    byId("abThumbsB").querySelectorAll("img")[0].click();
+    // ケースへ戻ると、離れる直前に選んでいた比較対象(1枚目)がそのまま復元される。
     await waitFor(() => byId("abRevA_notes").value === "A1" && byId("abRevB_notes").value === "B1",
-      "case1 first images restored");
+      "case1 selected images restored");
     note(getPrio("A", "P1") === "present" && getPrio("A", "P2") === "missing" && getPrio("A", "P3") === "unclear",
       "ケース移動後に優先項目が消えた: " + [getPrio("A", "P1"), getPrio("A", "P2"), getPrio("A", "P3")].join(","));
     note(getPrio("B", "P1") === "missing" && getPrio("B", "P3") === "unclear",
       "ケース移動後にBの優先項目が消えた");
+    // 2枚目の入力も残っている
+    byId("abThumbsA").querySelectorAll("img")[1].click();
+    byId("abThumbsB").querySelectorAll("img")[1].click();
+    await waitFor(() => byId("abRevA_notes").value === "A2" && byId("abRevB_notes").value === "B2",
+      "case1 second images restored");
+    note(getPrio("A", "P1") === "present" && getPrio("A", "P3") === "present",
+      "ケース移動後に2枚目の優先項目が消えた");
     note(Object.keys(store().reviewDrafts || {}).length === 5,
       "画像ごとの下書きが5件でない: " + Object.keys(store().reviewDrafts || {}).length);
     return { pass: problems.length === 0, problems, drafts: Object.keys(store().reviewDrafts || {}).length };
@@ -644,11 +646,9 @@ function phaseReloadSaveExport(arg) {
     await waitFor(() => byId("abRevA_notes").value === "A2" && byId("abRevB_notes").value === "B2",
       "back to second images");
 
-    // 8. 残るはどちらが良いかだけ -> 選ぶと保存できる
-    note(byId("abSaveNext").disabled === true, "preference 未選択で保存が押せる");
-    note(/未入力 1 件/.test(byId("abFlowState").textContent),
-      "残り1件の案内が出ていない: " + byId("abFlowState").textContent);
-    setVal("abPreference", "A");
+    // 8. 比較の入力も再読み込みをまたいで残るので、そのまま保存できる
+    note(byId("abPreference").value === "A",
+      "再読み込みで preference が消えた: " + byId("abPreference").value);
     setVal("abCompareNotes", "合成の比較コメント");
     await waitFor(() => !byId("abSaveNext").disabled, "save enabled after reload");
     byId("abSaveNext").click();
