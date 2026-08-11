@@ -2016,7 +2016,9 @@
     // preference, notes }。書き出しには出さず、完了判定にも使わない。
     comparisonDrafts: Object.create(null),
     comparisons: [],
-    invalidations: []
+    invalidations: [],
+    // レビューJSONLへ書き出した(= 提出した)画像。以後は外せない。
+    exportedImageIds: []
   };
   var ui = {
     sourceNo: null,
@@ -2099,7 +2101,8 @@
         reviewDrafts: db.reviewDrafts,
         comparisonDrafts: db.comparisonDrafts,
         comparisons: db.comparisons,
-        invalidations: db.invalidations
+        invalidations: db.invalidations,
+        exportedImageIds: db.exportedImageIds
       }));
       return true;
     } catch (e) {
@@ -2124,6 +2127,8 @@
         ? parsed.comparisonDrafts : Object.create(null);
       db.comparisons = parsed.comparisons || [];
       db.invalidations = parsed.invalidations || [];
+      // exportedImageIds は後方互換の追加項目。持たない既存記録は空で始める。
+      db.exportedImageIds = Array.isArray(parsed.exportedImageIds) ? parsed.exportedImageIds : [];
       // R3-FB の記録には defaultCondition が無い。既存の condition 行から拾って引き継ぐ
       // (移行処理は行わない。読めなければ最初の登録時に聞くだけ)。
       db.defaultCondition = parsed.defaultCondition || null;
@@ -2377,6 +2382,10 @@
     mine.forEach(function (r) { if (r.supersedes) superseded[r.supersedes] = true; });
     var tips = mine.filter(function (r) { return !superseded[r[idKey]]; });
     return { all: mine, tips: tips, active: tips.length === 1 ? tips[0] : null, ambiguous: tips.length > 1 };
+  }
+  // レビューJSONLへ書き出した画像は「提出済みの記録」。以後は外せない。
+  function isExported(imageId) {
+    return db.exportedImageIds.indexOf(imageId) >= 0;
   }
   function isDead(imageId) {
     return db.invalidations.some(function (r) { return r && r.imageId === imageId; });
@@ -3015,6 +3024,13 @@
     var host = el("abReview" + arm);
     if (host) host.style.display = sel ? "" : "none";
     show("abRemove" + arm, !!sel);
+    // 書き出し済み(=提出済み)の画像は外せない。押す前に分かるようにしておく。
+    var removeBtn = el("abRemove" + arm);
+    if (removeBtn) {
+      var locked = !!sel && isExported(sel.imageId);
+      removeBtn.disabled = locked;
+      removeBtn.textContent = locked ? "この画像は書き出し済み（外せません）" : "この画像を外す";
+    }
   }
 
   // 保存に足りていない入力の内訳。件数は「入力単位」で数える。
@@ -3252,6 +3268,10 @@
     db.images.forEach(function (r) { if (r.imageId === imageId) row = r; });
     if (!row) return;
     if (isDead(imageId)) { status("この画像はすでに外してあります。"); return; }
+    if (isExported(imageId)) {
+      status("この画像は書き出し済みです。提出した記録なので外せません（評価はそのまま残ります）。");
+      return;
+    }
     if (!window.confirm("この画像を比較から外しますか？（記録は残り、書き出しには出ません）")) return;
     captureReviewDraft(arm);
     delete db.reviewDrafts[imageId];
@@ -3353,9 +3373,13 @@
             return null;
           }
           var c = currentCase();
-          // rank は無効化済みも含む全履歴の最大+1(無効化後に足しても重複しない)。
+          // rank は「生きている画像が使っていない最小の正整数」。
+          //  無効化済みまで数えると 2枚外して2枚足したときに 5,6 のような飛び番になり、
+          //  提出物の順位が 1..N で揃わなくなる。生存分だけを見れば常に 1..N で詰まる。
+          var used = Object.create(null);
+          activeImagesFor(ui.sourceNo, arm).forEach(function (r) { used[r.rank] = true; });
           var next = 1;
-          allImagesFor(ui.sourceNo, arm).forEach(function (r) { if (r.rank >= next) next = r.rank + 1; });
+          while (used[next]) next += 1;
           var row = {
             imageId: c.arms[arm].generationId + "-img-" + makeId("x"),
             experimentId: db.pkg.experiment.experimentId,
@@ -3704,7 +3728,18 @@
       mime = "text/tab-separated-values;charset=utf-8";
     }
     if (!rows.length) { status("書き出す記録がまだありません。"); return; }
-    status(download(text, name, mime)
+    var wrote = download(text, name, mime);
+    // レビューJSONLを書き出した時点で、そこに含まれる画像を「提出済み」として固定する。
+    if (wrote && kind === "reviews") {
+      var before = db.exportedImageIds.length;
+      rows.forEach(function (r) {
+        (r.images || []).forEach(function (im) {
+          if (im.imageId && db.exportedImageIds.indexOf(im.imageId) < 0) db.exportedImageIds.push(im.imageId);
+        });
+      });
+      if (db.exportedImageIds.length !== before) persist();
+    }
+    status(wrote
       ? "書き出しました: " + name + "（" + rows.length + " 行）"
       : "書き出せませんでした。");
   }
@@ -3719,7 +3754,7 @@
     db.conditions = []; db.images = []; db.reviews = [];
     db.reviewDrafts = Object.create(null);
     db.comparisonDrafts = Object.create(null);
-    db.comparisons = []; db.invalidations = [];
+    db.comparisons = []; db.invalidations = []; db.exportedImageIds = [];
     // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
     // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。
     db.defaultCondition = null;

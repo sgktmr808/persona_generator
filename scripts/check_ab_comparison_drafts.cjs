@@ -449,22 +449,56 @@ function phaseEditSurvivesReload(arg) {
       "編集途中の下書きが再読み込みで消えた: " + JSON.stringify(now));
     note(store().comparisons.length === 1, "再読み込みで comparison が増減した");
 
-    // 14. 画像を外すと、存在しない画像IDの下書きが残らない
-    window.confirm = () => true;
+    // 14a. 書き出し済み(=提出済み)の画像は外せない
+    window.confirm = () => { problems.push("書き出し済み画像で確認ダイアログが出た"); return true; };
     byId("abThumbsA").querySelectorAll("img")[0].click();
     await delay(200);
+    const exportedId = selectedId("A");
+    note(byId("abRemoveA").disabled === true, "書き出し済み画像の「外す」が押せてしまう");
+    note(/書き出し済み/.test(byId("abRemoveA").textContent),
+      "書き出し済みだと分かる表示になっていない: " + byId("abRemoveA").textContent);
+    byId("abStatus").textContent = "";
+    byId("abRemoveA").disabled = false;          // 直接呼んでも拒否されること
+    byId("abRemoveA").click();
+    await waitS(/提出した記録なので外せません/, "exported image protected");
+    note(selectedId("A") === exportedId, "拒否したのに選択が変わった");
+    note(store().invalidations.length === 0, "拒否したのに無効化が記録された");
+
+    // 14b. 未書き出しの画像は従来どおり外せて、無効なIDが下書きへ残らない
+    window.confirm = () => true;
+    byId("abNext").click();
+    await waitFor(() => /ケース 2 \/ 2/.test(byId("abCaseCounter").textContent), "case 2");
+    await pickImage("A", "c2-a1.png", 201);
+    await pickImage("A", "c2-a2.png", 202);
+    await pickImage("B", "c2-b1.png", 203);
+    setVal("abPreference", "A");
+    setVal("abCompareNotes", "ケース2の下書き");
+    await delay(250);
+    byId("abThumbsA").querySelectorAll("img")[1].click();
+    await delay(200);
     const removed = selectedId("A");
+    byId("abStatus").textContent = "";
     byId("abRemoveA").click();
     await waitS(/画像を外しました/, "image removed");
     await delay(300);
-    const d = drafts()[a.caseKey];
+    const key2 = "p2";
+    const d = drafts()[key2];
     const ids = store().images.filter((r) => !store().invalidations.some((v) => v.imageId === r.imageId))
       .map((r) => r.imageId);
     note(!d || (d.controlImageId === "" || ids.indexOf(d.controlImageId) >= 0),
       "外した画像IDが下書きに残っている: " + JSON.stringify(d));
     note(selectedId("A") !== removed, "外した画像が選ばれたまま");
-    note(byId("abCaseState").textContent !== "完了", "外したのに完了のまま");
-    return { pass: problems.length === 0, problems, draft: drafts()[a.caseKey] || null };
+
+    // 14c. 外したあとに足しても rank は 1..N のまま（5,6 のような飛び番にしない）
+    await pickImage("A", "c2-a3.png", 204);
+    await delay(200);
+    const live = store().images
+      .filter((r) => r.caseKey === "p2" && r.arm === "A" && !store().invalidations.some((v) => v.imageId === r.imageId))
+      .map((r) => r.rank).sort((x, y) => x - y);
+    note(JSON.stringify(live) === JSON.stringify([1, 2]),
+      "外して足した後の rank が 1..N になっていない: [" + live.join(",") + "]");
+
+    return { pass: problems.length === 0, problems, draft: drafts()[key2] || null, ranks: live };
   })(__ARG__);
 }
 
