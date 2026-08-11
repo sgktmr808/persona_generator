@@ -219,8 +219,22 @@
   }
   .ab-state[data-ab-state="done"] { border-color: var(--ok); color: var(--ok); }
   .ab-state[data-ab-state="ready"] { border-color: var(--accent-2); color: var(--accent-2); }
-  .ab-header-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
-  .ab-header-nav button { min-height: 44px; }
+  /* 追加ラウンドでは「次の追加対象へ」が増えて4つになる。狭い画面では折り返して
+     並べる(固定3列のままだと1列が潰れてボタンが読めなくなる)。 */
+  .ab-header-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .ab-header-nav button { min-height: 44px; flex: 1 1 96px; min-width: 0; padding-left: 4px; padding-right: 4px; }
+  /* 追加レビュー計画の帯。対象ケースかどうかを最初に伝える。 */
+  .ab-resample {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--accent-2, var(--border));
+    border-radius: 8px;
+    font-size: .86em;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .ab-resample[data-ab-target="false"] { border-color: var(--border); opacity: .9; }
+  .ab-resample b { font-weight: 700; }
 
   /* デスクトップは A/B を同じ高さの2列、狭い画面は縦並び。 */
   .ab-work { display: grid; grid-template-columns: 1fr; gap: 12px; }
@@ -591,8 +605,10 @@
         <div class="ab-header-nav">
           <button id="abPrev" type="button">◀ 前</button>
           <button id="abJumpIncomplete" type="button">未完了へ</button>
+          <button id="abNextTarget" type="button" hidden>次の追加対象へ</button>
           <button id="abNext" type="button">次 ▶</button>
         </div>
+        <div id="abResampleBanner" class="ab-resample" hidden></div>
       </div>
 
       <div id="abWork" class="ab-work">
@@ -679,6 +695,10 @@
         <div class="row"><button id="abExportReviews" class="grow" type="button">レビューJSONL</button></div>
         <div class="row"><button id="abExportComparisons" class="grow" type="button">比較JSONL</button></div>
         <div class="row"><button id="abExportCopyList" class="grow" type="button">画像コピーリスト</button></div>
+        <div class="row"><button id="abLoadResamplePlan" class="grow" type="button">追加レビュー計画を読み込む</button></div>
+        <input id="abResamplePlanInput" type="file" accept=".json,application/json" style="display:none;" />
+        <div id="abResamplePlanState" class="sub"></div>
+        <div class="row"><button id="abDropResamplePlan" class="grow" type="button" hidden>追加レビュー計画をやめる</button></div>
         <div class="row"><button id="abEditCondition" class="grow" type="button">生成条件を変更</button></div>
         <div class="row"><button id="abLoadAnother" class="grow" type="button">別のパッケージを読み込む</button></div>
         <div class="row"><button id="abClear" class="grow" type="button">この実験の記録を削除</button></div>
@@ -2018,7 +2038,9 @@
     comparisons: [],
     invalidations: [],
     // レビューJSONLへ書き出した(= 提出した)画像。以後は外せない。
-    exportedImageIds: []
+    exportedImageIds: [],
+    // 追加レビュー計画(任意)。読み込むまでは null で、通常の初回レビューと完全に同じ挙動。
+    resamplePlan: null
   };
   var ui = {
     sourceNo: null,
@@ -2102,7 +2124,8 @@
         comparisonDrafts: db.comparisonDrafts,
         comparisons: db.comparisons,
         invalidations: db.invalidations,
-        exportedImageIds: db.exportedImageIds
+        exportedImageIds: db.exportedImageIds,
+        resamplePlan: db.resamplePlan
       }));
       return true;
     } catch (e) {
@@ -2129,6 +2152,8 @@
       db.invalidations = parsed.invalidations || [];
       // exportedImageIds は後方互換の追加項目。持たない既存記録は空で始める。
       db.exportedImageIds = Array.isArray(parsed.exportedImageIds) ? parsed.exportedImageIds : [];
+      // 追加レビュー計画も後方互換の追加項目。無ければ通常の初回レビューとして動く。
+      db.resamplePlan = normalizeStoredPlan(parsed.resamplePlan);
       // R3-FB の記録には defaultCondition が無い。既存の condition 行から拾って引き継ぐ
       // (移行処理は行わない。読めなければ最初の登録時に聞くだけ)。
       db.defaultCondition = parsed.defaultCondition || null;
@@ -2456,8 +2481,10 @@
       });
     });
     // 必要枚数を宣言したパッケージでは、両面がその枚数に届くまで完了にしない。
-    var need = requiredImagesPerArm();
-    var enough = !need || (a >= need && b >= need);
+    // 追加ラウンドの対象ケースでは、初回分に追加分を足した枚数が必要枚数になる。
+    var needA = requiredImagesForArm(sourceNo, "A");
+    var needB = requiredImagesForArm(sourceNo, "B");
+    var enough = (!needA || a >= needA) && (!needB || b >= needB);
     if (usableComparisonFor(sourceNo).active && allReviewed && enough) return { key: "done", label: "完了" };
     if (!a && !b) return { key: "empty", label: "未生成" };
     if (a && !b) return { key: "partial", label: "Aのみ" };
@@ -2486,6 +2513,249 @@
       if (!isComplete(c.sourceNo)) return c.sourceNo;
     }
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 追加レビュー計画(任意の第2ラウンド)
+  //  解析側が出した計画JSONを読み込み、「指定されたケースにだけ」画像を足す
+  //  ラウンドへ切り替える。計画が無いときの挙動は一切変えない。
+  //
+  //  この画面が守る約束:
+  //   - 計画は今読み込んでいるパッケージ(実験IDと定義SHA-256)と一致しなければ受け取らない
+  //   - 計画に載った初回の画像・評価は変更できない(外す・書き換えるを禁止)
+  //   - 追加できるのは対象ケースだけ。対象外のケースは初回のまま凍結する
+  //   - 対象ケースは A/B 各 2 枚まで。順位は初回の続き(3・4)にしかならない
+  //   - 対象がすべて揃うまで書き出させない(欠けた提出を作らせない)
+  //  実験名や閾値の意味はこのファイルへ書かない。すべて計画JSONから読む。
+  // ---------------------------------------------------------------------------
+  var PLAN_STAGE = "initial";           // 受け取れるのは初回解析の結果だけ
+  var PLAN_ADD_PER_ARM_DEFAULT = 2;
+
+  function normalizeStoredPlan(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (!Array.isArray(raw.cases) || !raw.cases.length) return null;
+    if (!raw.lockedImages || typeof raw.lockedImages !== "object") return null;
+    return raw;
+  }
+
+  function planActive() { return !!db.resamplePlan; }
+  function plan() { return db.resamplePlan; }
+  function planAddPerArm() {
+    var n = plan() && plan().addPerArm;
+    return typeof n === "number" && n > 0 ? n : PLAN_ADD_PER_ARM_DEFAULT;
+  }
+  function planTargets() {
+    return planActive() ? plan().cases.map(function (c) { return c.sourceNo; }) : [];
+  }
+  function isPlanTarget(sourceNo) {
+    return planActive() && planTargets().indexOf(sourceNo) >= 0;
+  }
+  function planCaseLabel(sourceNo) {
+    var found = "";
+    if (!planActive()) return "";
+    plan().cases.forEach(function (c) { if (c.sourceNo === sourceNo) found = c.caseId || ""; });
+    return found;
+  }
+  // 初回提出に含まれていた画像。計画がある間は外せず、評価も書き換えられない。
+  function isPlanLockedImage(imageId) {
+    return planActive() && !!imageId
+      && Object.prototype.hasOwnProperty.call(plan().lockedImages, imageId);
+  }
+  // そのケース・その面で、このラウンドに追加した画像(初回分を除く)。
+  function planAddedFor(sourceNo, arm) {
+    return activeImagesFor(sourceNo, arm).filter(function (r) { return !isPlanLockedImage(r.imageId); });
+  }
+  function planAddedCount() {
+    var n = 0;
+    planTargets().forEach(function (sourceNo) {
+      ARMS.forEach(function (arm) { n += planAddedFor(sourceNo, arm).length; });
+    });
+    return n;
+  }
+  function planExpectedTotal() { return planTargets().length * ARMS.length * planAddPerArm(); }
+  // 追加分が両面そろい、全画像の評価と比較が保存済みなら、その対象は完了。
+  function planCaseDone(sourceNo) {
+    if (!isPlanTarget(sourceNo)) return false;
+    var enough = ARMS.every(function (arm) { return planAddedFor(sourceNo, arm).length >= planAddPerArm(); });
+    return enough && isComplete(sourceNo);
+  }
+  function planDoneCount() {
+    return planTargets().filter(planCaseDone).length;
+  }
+  function planAllDone() {
+    return planActive() && planTargets().length > 0 && planTargets().every(planCaseDone);
+  }
+  // 追加できる残り枚数。対象外は常に 0。
+  function planRemainingFor(sourceNo, arm) {
+    if (!planActive()) return null;
+    if (!isPlanTarget(sourceNo)) return 0;
+    return Math.max(0, planAddPerArm() - planAddedFor(sourceNo, arm).length);
+  }
+  function lockedCountFor(sourceNo, arm) {
+    return activeImagesFor(sourceNo, arm).filter(function (r) { return isPlanLockedImage(r.imageId); }).length;
+  }
+  // その面に必要な枚数。計画の対象ケースだけ「初回分 + 追加分」へ増える。
+  //  計画が無ければパッケージの宣言そのまま(従来と同じ)。
+  function requiredImagesForArm(sourceNo, arm) {
+    var base = requiredImagesPerArm();
+    if (!planActive() || !isPlanTarget(sourceNo)) return base;
+    return lockedCountFor(sourceNo, arm) + planAddPerArm();
+  }
+  // その面へ置ける上限。対象外のケースは 0(初回のまま凍結する)。
+  function maxImagesForArm(sourceNo, arm) {
+    var max = (db.pkg && db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
+    if (!planActive()) return max;
+    if (!isPlanTarget(sourceNo)) return activeImagesFor(sourceNo, arm).length;
+    return Math.min(max, requiredImagesForArm(sourceNo, arm));
+  }
+
+  function nextPlanTargetFrom(sourceNo) {
+    var targets = planTargets();
+    if (!targets.length) return null;
+    var order = db.pkg.cases.map(function (c) { return c.sourceNo; })
+      .filter(function (n) { return targets.indexOf(n) >= 0; });
+    var start = order.indexOf(sourceNo);
+    var pending = null;
+    for (var step = 1; step <= order.length; step += 1) {
+      var n = order[(start + step + order.length) % order.length];
+      if (!planCaseDone(n)) { pending = n; break; }
+    }
+    if (pending !== null) return pending;
+    // 全部そろっていても対象内は移動できるようにする(見直しのため)。
+    return order[(start + 1 + order.length) % order.length];
+  }
+
+  // 計画JSONを今の記録へ突き合わせる。1件でも食い違えば受け取らない。
+  //  「読めた項目だけ使う」ことはしない。欠けたまま進むと、初回の画像を
+  //  守れていないのに守ったつもりのラウンドになる。
+  function buildPlanFromReport(report) {
+    var errors = [];
+    if (!report || typeof report !== "object" || Array.isArray(report)) {
+      return { ok: false, errors: ["JSON オブジェクトではありません"] };
+    }
+    if (!db.pkg) return { ok: false, errors: ["先にパッケージを読み込んでください"] };
+
+    var expId = db.pkg.experiment.experimentId;
+    if (String(report.experimentId || "") !== expId) {
+      errors.push("実験IDが違います（計画: " + String(report.experimentId || "なし") + " / 読み込み中: " + expId + "）");
+    }
+    if (String(report.packageDefinitionSha256 || "") !== String(db.pkg.definitionSha256 || "")) {
+      errors.push("実験定義のSHA-256が一致しません（別の版のパッケージ用の計画です）");
+    }
+    if (report.stage && String(report.stage) !== PLAN_STAGE) {
+      errors.push("初回解析の結果ではありません（stage: " + String(report.stage) + "）");
+    }
+    if (Array.isArray(report.problems) && report.problems.length) {
+      errors.push("計画側に未解決の指摘が " + report.problems.length + " 件あります");
+    }
+    var resample = report.resample;
+    if (!resample || typeof resample !== "object" || !Array.isArray(resample.cases) || !resample.cases.length) {
+      errors.push("追加対象のケースがありません");
+    }
+    var snapshot = report.snapshot;
+    if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.reviewRows) || !snapshot.reviewRows.length) {
+      errors.push("初回提出のスナップショットがありません");
+    }
+    if (errors.length) return { ok: false, errors: errors };
+
+    // 対象ケースはパッケージに実在し、重複しないこと。
+    var targets = [];
+    var seen = Object.create(null);
+    resample.cases.forEach(function (c) {
+      var n = c && c.sourceNo;
+      if (typeof n !== "number" || !caseBySourceNo(n)) {
+        errors.push("対象ケース No." + String(n) + " はこのパッケージにありません");
+        return;
+      }
+      if (seen[n]) { errors.push("対象ケース No." + n + " が重複しています"); return; }
+      seen[n] = true;
+      targets.push({ caseId: String(c.caseId || ""), sourceNo: n, deltaAesthetic: c.deltaAesthetic });
+    });
+
+    // スナップショットの画像が、この端末の記録と1件ずつ一致すること。
+    var locked = Object.create(null);
+    var lockedCount = 0;
+    var byId = Object.create(null);
+    db.images.forEach(function (r) { byId[r.imageId] = r; });
+    snapshot.reviewRows.forEach(function (row) {
+      (row.images || []).forEach(function (im) {
+        var have = byId[im.imageId];
+        if (!have) {
+          errors.push("初回の画像がこの端末にありません: " + String(im.imageId));
+          return;
+        }
+        if (isDead(im.imageId)) {
+          errors.push("初回の画像が外されています: " + String(im.imageId));
+          return;
+        }
+        if (have.rank !== im.rank) {
+          errors.push("初回の画像の順位が変わっています: " + String(im.imageId));
+          return;
+        }
+        if (im.sha256 && have.metadata && have.metadata.sha256 !== im.sha256) {
+          errors.push("初回の画像が差し替えられています: " + String(im.imageId));
+          return;
+        }
+        if (!activeReviewFor(im.imageId).active) {
+          errors.push("初回の評価が見つかりません: " + String(im.imageId));
+          return;
+        }
+        locked[im.imageId] = { sourceNo: row.sourceNo, slot: row.slot, rank: im.rank, sha256: im.sha256 || "" };
+        lockedCount += 1;
+      });
+    });
+    if (!lockedCount) errors.push("初回の画像が1枚も照合できませんでした");
+    if (errors.length) return { ok: false, errors: errors };
+
+    return {
+      ok: true,
+      plan: {
+        schemaVersion: "ab-resample-plan.v1",
+        experimentId: expId,
+        packageDefinitionSha256: String(report.packageDefinitionSha256 || ""),
+        stage: PLAN_STAGE,
+        threshold: resample.threshold,
+        addPerArm: PLAN_ADD_PER_ARM_DEFAULT,
+        cases: targets,
+        lockedImages: locked,
+        lockedCount: lockedCount,
+        loadedAt: nowIso()
+      }
+    };
+  }
+
+  function loadResamplePlanFile(file) {
+    if (!file) return;
+    if (!db.pkg) { status("先にパッケージを読み込んでください。"); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try { parsed = JSON.parse(String(reader.result)); }
+      catch (e) { status("追加レビュー計画を JSON として読めませんでした: " + (e && e.message)); return; }
+      var built = buildPlanFromReport(parsed);
+      if (!built.ok) {
+        status("この追加レビュー計画は使えません: " + built.errors.slice(0, 3).join(" / "));
+        return;
+      }
+      db.resamplePlan = built.plan;
+      persist();
+      var first = built.plan.cases[0].sourceNo;
+      // goToCase は表示を作り直すときに状況表示を空へ戻す。案内はその後に出す。
+      goToCase(first);
+      status("追加レビュー計画を読み込みました（対象 " + built.plan.cases.length + " ケース・A/B 各 "
+        + planAddPerArm() + " 枚・初回 " + built.plan.lockedCount + " 枚は変更できません）。");
+    };
+    reader.onerror = function () { status("追加レビュー計画のファイルを読めませんでした。"); };
+    reader.readAsText(file, "utf-8");
+  }
+
+  function dropResamplePlan() {
+    if (!planActive()) return;
+    if (!window.confirm("追加レビュー計画をやめますか？（追加した画像と評価は残ります）")) return;
+    db.resamplePlan = null;
+    persist();
+    status("追加レビュー計画をやめました。通常のレビューに戻ります。");
+    render();
   }
 
   // ---------------------------------------------------------------------------
@@ -2818,6 +3088,9 @@
   function captureReviewDraft(arm) {
     var imageId = ui.selected[arm];
     if (!imageId || !el(reviewFieldId(arm, "verdict"))) return;
+    // 初回提出の画像は評価を書き換えない。下書きも作らない
+    // (作ると「保存前の入力あり」としてケースが未完了へ戻ってしまう)。
+    if (isPlanLockedImage(imageId)) return;
     var values = currentReviewValues(arm);
     var tip = activeReviewFor(imageId);
     var saved = tip.active ? reviewValuesFromRow(tip.active) : null;
@@ -2946,6 +3219,57 @@
     disable("abPrev", caseIndex(ui.sourceNo) <= 0);
     disable("abNext", caseIndex(ui.sourceNo) >= db.pkg.cases.length - 1);
     disable("abJumpIncomplete", nextIncompleteFrom(ui.sourceNo) === null);
+    renderResampleBanner();
+  }
+
+  // 追加ラウンドの帯。今のケースが対象かどうかと、全体の進み具合を出す。
+  function renderResampleBanner() {
+    show("abNextTarget", planActive());
+    show("abResampleBanner", planActive());
+    var node = el("abResampleBanner");
+    if (!planActive() || !node) return;
+    disable("abNextTarget", planTargets().length <= 1 && planCaseDone(ui.sourceNo));
+    var target = isPlanTarget(ui.sourceNo);
+    node.setAttribute("data-ab-target", target ? "true" : "false");
+    clear(node);
+    var head = document.createElement("b");
+    var label = planCaseLabel(ui.sourceNo);
+    head.textContent = target
+      ? ("追加対象のケースです" + (label ? "（" + label + "）" : ""))
+      : "このケースは追加対象ではありません";
+    node.appendChild(head);
+    var detail = document.createElement("div");
+    if (target) {
+      var per = ARMS.map(function (arm) {
+        return arm + " " + planAddedFor(ui.sourceNo, arm).length + " / " + planAddPerArm() + " 枚";
+      }).join("　");
+      detail.textContent = "このケースの追加: " + per
+        + "　（初回の画像と評価は変更できません）";
+    } else {
+      detail.textContent = "初回提出のまま凍結しています。画像の追加・削除・評価の変更はできません。";
+    }
+    node.appendChild(detail);
+    var overall = document.createElement("div");
+    overall.textContent = "追加対象 " + planTargets().length + " ケース中 " + planDoneCount()
+      + " ケース完了　追加画像 " + planAddedCount() + " / " + planExpectedTotal() + " 枚";
+    node.appendChild(overall);
+  }
+
+  function renderResamplePlanState() {
+    show("abDropResamplePlan", planActive());
+    if (!planActive()) {
+      setText("abResamplePlanState", db.pkg
+        ? "初回提出の解析JSONを読み込むと、指定されたケースだけ画像を追加する第2ラウンドに切り替わります。"
+        : "");
+      return;
+    }
+    var targets = plan().cases.map(function (c) {
+      return (c.caseId || ("No." + c.sourceNo)) + (planCaseDone(c.sourceNo) ? " ✓" : "");
+    }).join(" / ");
+    setText("abResamplePlanState", "追加レビュー計画: 対象 " + planTargets().length + " ケース（" + targets + "）"
+      + "　追加画像 " + planAddedCount() + " / " + planExpectedTotal() + " 枚"
+      + "　初回 " + plan().lockedCount + " 枚は変更不可"
+      + (planAllDone() ? "　→ 書き出せます" : "　→ すべて揃うまで書き出せません"));
   }
 
   function renderSide(arm) {
@@ -2953,7 +3277,7 @@
     if (!c) return;
     if (syncPriorityForm(arm)) prefillReview(arm);
     var rows = activeImagesFor(ui.sourceNo, arm);
-    var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
+    var max = maxImagesForArm(ui.sourceNo, arm);
 
     setVal("abPrompt" + arm, c.arms[arm].prompt);
     var reviewed = rows.filter(function (r) { return reviewValuesReady(reviewValuesFor(r.imageId), ui.sourceNo); }).length;
@@ -2976,13 +3300,18 @@
     }
 
     var drop = el("abDrop" + arm);
-    var full = rows.length >= max;
+    var frozen = planActive() && !isPlanTarget(ui.sourceNo);
+    var remaining = planRemainingFor(ui.sourceNo, arm);
+    var full = frozen || rows.length >= max;
     if (drop) {
       drop.setAttribute("aria-disabled", full ? "true" : "false");
       var t = drop.querySelector(".ab-drop-text");
-      if (t) t.textContent = full
-        ? ("この面はすでに " + max + " 枚です")
-        : "画像をここへドロップ／タップして選ぶ";
+      if (t) t.textContent = frozen
+        ? "このケースは追加対象ではありません"
+        : full
+          ? (planActive() ? "このラウンドの追加は済んでいます" : "この面はすでに " + max + " 枚です")
+          : (remaining !== null ? ("画像をここへドロップ／タップして選ぶ（あと " + remaining + " 枚）")
+            : "画像をここへドロップ／タップして選ぶ");
     }
     var input = el("abFile" + arm);
     if (input) input.disabled = full;
@@ -3024,12 +3353,20 @@
     var host = el("abReview" + arm);
     if (host) host.style.display = sel ? "" : "none";
     show("abRemove" + arm, !!sel);
+    // 初回提出の画像は評価も入力できない。画面上でも触れない状態にする。
+    var fromInitial = !!sel && isPlanLockedImage(sel.imageId);
+    if (host) {
+      var fields = host.querySelectorAll("select, input, textarea");
+      for (var i = 0; i < fields.length; i += 1) fields[i].disabled = fromInitial;
+      host.setAttribute("data-ab-review-locked", fromInitial ? "true" : "false");
+    }
     // 書き出し済み(=提出済み)の画像は外せない。押す前に分かるようにしておく。
     var removeBtn = el("abRemove" + arm);
     if (removeBtn) {
-      var locked = !!sel && isExported(sel.imageId);
+      var locked = !!sel && (fromInitial || isExported(sel.imageId));
       removeBtn.disabled = locked;
-      removeBtn.textContent = locked ? "この画像は書き出し済み（外せません）" : "この画像を外す";
+      removeBtn.textContent = fromInitial ? "この画像は初回提出分（変更できません）"
+        : locked ? "この画像は書き出し済み（外せません）" : "この画像を外す";
     }
   }
 
@@ -3041,7 +3378,8 @@
     };
     var present = ARMS.filter(function (arm) { return rowsByArm[arm].length > 0; });
     var both = present.length === 2;
-    var need = requiredImagesPerArm();
+    var needFor = { A: requiredImagesForArm(ui.sourceNo, "A"), B: requiredImagesForArm(ui.sourceNo, "B") };
+    var need = Math.max(needFor.A, needFor.B);
     var scoreKeys = (db.pkg && db.pkg.policy.scoreKeys) || [];
     var scoreLabel = { aestheticSatisfaction: "美的満足度", intentMatch: "意図一致" };
     var reasons = [];
@@ -3049,8 +3387,8 @@
 
     // 1. 必要枚数
     ARMS.forEach(function (arm) {
-      if (!need) return;
-      var short = need - rowsByArm[arm].length;
+      if (!needFor[arm]) return;
+      var short = needFor[arm] - rowsByArm[arm].length;
       if (short > 0) { count += short; reasons.push(arm + " の画像があと " + short + " 枚"); }
     });
 
@@ -3088,7 +3426,9 @@
     // 4. preference
     if ((both || needsBoth) && !val("abPreference")) { count += 1; reasons.push("どちらが良いかが 1 件"); }
 
-    var enoughImages = !need || ARMS.every(function (arm) { return rowsByArm[arm].length >= need; });
+    var enoughImages = ARMS.every(function (arm) {
+      return !needFor[arm] || rowsByArm[arm].length >= needFor[arm];
+    });
     return {
       rowsByArm: rowsByArm, present: present, both: both, need: need,
       count: count, reasons: reasons, enoughImages: enoughImages, compareReady: compareReady
@@ -3101,6 +3441,18 @@
       .map(function (arm) { return arm + " の画像がまだありません"; });
 
     var btn = el("abSaveNext");
+    // 追加ラウンドの対象外ケースは、保存操作そのものを閉じる。
+    if (planActive() && !isPlanTarget(ui.sourceNo)) {
+      if (btn) btn.textContent = "このケースは追加対象ではありません";
+      disable("abSaveNext", true);
+      disable("abPreference", true);
+      var notes = el("abCompareNotes");
+      if (notes) notes.disabled = true;
+      setText("abFlowState", "初回提出のまま凍結しています。画像の追加・削除・評価の変更はできません。");
+      return;
+    }
+    var notesOn = el("abCompareNotes");
+    if (notesOn) notesOn.disabled = false;
     var imageCount = g.rowsByArm.A.length + g.rowsByArm.B.length;
     if (btn) {
       btn.textContent = (g.need && !g.enoughImages)
@@ -3135,6 +3487,14 @@
 
   function renderExportSummary() {
     if (!db.pkg) return;
+    renderResamplePlanState();
+    if (planActive()) {
+      var pending = planTargets().filter(function (n) { return !planCaseDone(n); });
+      setText("abProgressSummary", "追加ラウンド: 対象 " + planDoneCount() + " / " + planTargets().length + " ケース完了"
+        + "　追加画像 " + planAddedCount() + " / " + planExpectedTotal() + " 枚"
+        + (pending.length ? "　未完了: No." + pending.join(", No.") : "　すべて完了"));
+      return;
+    }
     var incomplete = db.pkg.cases.filter(function (c) { return !isComplete(c.sourceNo); })
       .map(function (c) { return c.sourceNo; });
     setText("abProgressSummary", "完了 " + doneCount() + " / " + db.pkg.cases.length + " 件"
@@ -3268,6 +3628,10 @@
     db.images.forEach(function (r) { if (r.imageId === imageId) row = r; });
     if (!row) return;
     if (isDead(imageId)) { status("この画像はすでに外してあります。"); return; }
+    if (isPlanLockedImage(imageId)) {
+      status("この画像は初回提出に含まれています。追加ラウンドでは外せません（評価もそのまま残ります）。");
+      return;
+    }
     if (isExported(imageId)) {
       status("この画像は書き出し済みです。提出した記録なので外せません（評価はそのまま残ります）。");
       return;
@@ -3355,9 +3719,16 @@
   function addImages(arm, fileList) {
     var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return Promise.resolve();
+    // 追加ラウンドでは、計画に載っていないケースへ画像を足せない。
+    if (planActive() && !isPlanTarget(ui.sourceNo)) {
+      status("このケースは追加対象ではありません。初回の記録のまま変更できません。");
+      var offInput = el("abFile" + arm);
+      if (offInput) offInput.value = "";
+      return Promise.resolve();
+    }
     // 新しい画像へ選択が移る前に、現在表示中の画像の入力を退避する。
     captureReviewDraft(arm);
-    var max = (db.pkg.policy && db.pkg.policy.maxImagesPerArm) || 5;
+    var max = maxImagesForArm(ui.sourceNo, arm);
     var cond = ensureConditionRow(ui.sourceNo);
     if (!cond) { status("先に画像生成元を登録してください。"); return Promise.resolve(); }
 
@@ -3380,6 +3751,12 @@
           activeImagesFor(ui.sourceNo, arm).forEach(function (r) { used[r.rank] = true; });
           var next = 1;
           while (used[next]) next += 1;
+          // 追加ラウンドでは初回の続き(初回枚数+1 以降)しか許さない。
+          //  ここが 1・2 に戻るなら初回の画像が失われているということなので、足さずに止める。
+          if (planActive() && isPlanTarget(ui.sourceNo) && next <= lockedCountFor(ui.sourceNo, arm)) {
+            skipped.push("初回の順位と衝突");
+            return null;
+          }
           var row = {
             imageId: c.arms[arm].generationId + "-img-" + makeId("x"),
             experimentId: db.pkg.experiment.experimentId,
@@ -3426,6 +3803,11 @@
 
   // 一操作で「全登録画像の評価・A/B比較」を既存の append-only 形式で保存し、次の未完了ケースへ。
   function saveAndNext() {
+    // 追加ラウンドの対象外ケースは、初回の記録をそのまま残す(上書き保存もしない)。
+    if (planActive() && !isPlanTarget(ui.sourceNo)) {
+      status("このケースは追加対象ではありません。初回の記録は変更できません。");
+      return;
+    }
     ARMS.forEach(captureReviewDraft);
     var rowsByArm = {
       A: activeImagesFor(ui.sourceNo, "A"),
@@ -3502,14 +3884,19 @@
     }
     persist();
 
-    var next = nextIncompleteFrom(ui.sourceNo);
+    // 追加ラウンドでは対象ケースの中だけを回る(対象外へ勝手に移らない)。
+    var next = planActive() ? nextPlanTargetFrom(ui.sourceNo) : nextIncompleteFrom(ui.sourceNo);
+    if (planActive() && next !== null && planCaseDone(next)) next = null;
     if (savedComparison && next !== null && next !== ui.sourceNo) {
-      status("保存しました。次の未完了ケースへ移ります。");
+      status("保存しました。" + (planActive() ? "次の追加対象へ移ります。" : "次の未完了ケースへ移ります。"));
       goToCase(next);
       return;
     }
     status(savedComparison
-      ? "保存しました。未完了のケースはありません。"
+      ? (planActive()
+        ? (planAllDone() ? "保存しました。追加対象はすべて完了です。書き出してください。"
+          : "保存しました。")
+        : "保存しました。未完了のケースはありません。")
       : (present[0] + " の評価を保存しました（片側だけの記録です。順位や採用の意味は持ちません）。"));
     ARMS.forEach(prefillReview);
     render();
@@ -3710,6 +4097,15 @@
 
   function exportKind(kind) {
     if (!db.pkg) { status("先にパッケージを読み込んでください。"); return; }
+    // 追加ラウンドは、対象がすべて揃うまで書き出させない。
+    //  途中で書き出すと、足りない提出物が「最終提出」として渡ってしまう。
+    if (planActive() && !planAllDone()) {
+      var pending = planTargets().filter(function (n) { return !planCaseDone(n); });
+      status("追加対象がまだ揃っていません（残り " + pending.length + " ケース: No."
+        + pending.join(", No.") + "／追加画像 " + planAddedCount() + " / " + planExpectedTotal()
+        + " 枚）。すべて揃うまで書き出せません。");
+      return;
+    }
     var rows, text, name, mime;
     if (kind === "reviews") {
       rows = buildReviewRows();
@@ -3755,6 +4151,8 @@
     db.reviewDrafts = Object.create(null);
     db.comparisonDrafts = Object.create(null);
     db.comparisons = []; db.invalidations = []; db.exportedImageIds = [];
+    // 記録を消したら、初回提出を指していた追加レビュー計画も成り立たない。
+    db.resamplePlan = null;
     // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
     // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。
     db.defaultCondition = null;
@@ -3838,6 +4236,12 @@
       render();
       return;
     }
+    // 追加ラウンドでは、まず未完了の追加対象を開く(対象外のケースから始めない)。
+    if (planActive()) {
+      var pending = planTargets().filter(function (n) { return !planCaseDone(n); });
+      goToCase(pending.length ? pending[0] : planTargets()[0]);
+      return;
+    }
     var first = nextIncompleteFrom(db.pkg.cases[db.pkg.cases.length - 1].sourceNo);
     goToCase(first === null ? db.pkg.cases[0].sourceNo : first);
   }
@@ -3916,6 +4320,24 @@
     on("abPrev", "click", function () { stepCase(-1); });
     on("abNext", "click", function () { stepCase(1); });
     on("abJumpIncomplete", "click", jumpIncomplete);
+    on("abNextTarget", "click", function () {
+      if (!planActive()) return;
+      var next = nextPlanTargetFrom(ui.sourceNo);
+      if (next === null) { status("追加対象がありません。"); return; }
+      if (next === ui.sourceNo) { status("追加対象はこのケースだけです。"); return; }
+      goToCase(next);
+    });
+    on("abLoadResamplePlan", "click", function () {
+      if (!db.pkg) { status("先にパッケージを読み込んでください。"); return; }
+      var n = el("abResamplePlanInput");
+      if (n) n.click();
+    });
+    on("abResamplePlanInput", "change", function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) loadResamplePlanFile(f);
+      e.target.value = "";
+    });
+    on("abDropResamplePlan", "click", dropResamplePlan);
 
     ARMS.forEach(function (arm) {
       on("abCopy" + arm, "click", function () {
