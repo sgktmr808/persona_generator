@@ -2625,16 +2625,51 @@
     return order[(start + 1 + order.length) % order.length];
   }
 
+  // 評価・比較の正規化。解析側と**同じ並び・同じ文字列化**で組む。
+  //  ここがずれると「変わっていないのに拒否」「変わったのに受理」の両方が起きる。
+  //  可変値(reviewId の時刻・comparisonId・supersedes・書き出し時刻)は入れない。
+  function normalizedEvaluationOf(image) {
+    var e = (image && image.evaluation) || {};
+    return {
+      verdict: String(e.verdict === undefined || e.verdict === null ? "" : e.verdict),
+      aestheticSatisfaction: String(e.aestheticSatisfaction === undefined || e.aestheticSatisfaction === null
+        ? "" : e.aestheticSatisfaction),
+      intentMatch: String(e.intentMatch === undefined || e.intentMatch === null ? "" : e.intentMatch),
+      failures: (e.failures || []).map(String).slice().sort(),
+      priorityChecks: (e.priorityChecks || [])
+        .map(function (p) { return { itemId: String(p.itemId), status: String(p.status) }; })
+        .sort(function (a, b) { return a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0; }),
+      missingPriorityCount: e.missingPriorityCount === undefined ? null : e.missingPriorityCount,
+      notes: String(image && image.notes !== undefined && image.notes !== null ? image.notes : "")
+    };
+  }
+  function normalizedComparisonOf(c) {
+    return {
+      sourceNo: c.sourceNo,
+      armGenerationIds: { A: (c.armGenerationIds || {}).A || "", B: (c.armGenerationIds || {}).B || "" },
+      promptSha256: { A: (c.promptSha256 || {}).A || "", B: (c.promptSha256 || {}).B || "" },
+      comparedImageIds: { A: (c.comparedImageIds || {}).A || "", B: (c.comparedImageIds || {}).B || "" },
+      preference: String(c.preference === undefined || c.preference === null ? "" : c.preference),
+      notes: String(c.notes === undefined || c.notes === null ? "" : c.notes)
+    };
+  }
+
+  function isSha256(v) { return typeof v === "string" && /^[0-9a-f]{64}$/.test(v); }
+
   // 計画JSONを今の記録へ突き合わせる。1件でも食い違えば受け取らない。
-  //  「読めた項目だけ使う」ことはしない。欠けたまま進むと、初回の画像を
-  //  守れていないのに守ったつもりのラウンドになる。
+  //  「読めた項目だけ使う」ことはしない。欠けたまま進むと、初回の画像と評価を
+  //  守れていないのに守ったつもりのラウンドになり、最終解析で差し戻される。
+  //  照合は「今この画面が書き出す内容」を組み立てて行う。書き出しと同じ経路なので、
+  //  提出物として出るものが変わっていれば必ず捕まる。
   function buildPlanFromReport(report) {
     var errors = [];
+    var reject = function () { return Promise.resolve({ ok: false, errors: errors }); };
     if (!report || typeof report !== "object" || Array.isArray(report)) {
-      return { ok: false, errors: ["JSON オブジェクトではありません"] };
+      return Promise.resolve({ ok: false, errors: ["JSON オブジェクトではありません"] });
     }
-    if (!db.pkg) return { ok: false, errors: ["先にパッケージを読み込んでください"] };
+    if (!db.pkg) return Promise.resolve({ ok: false, errors: ["先にパッケージを読み込んでください"] });
 
+    // --- 1. 計画そのものの形 ---------------------------------------------
     var expId = db.pkg.experiment.experimentId;
     if (String(report.experimentId || "") !== expId) {
       errors.push("実験IDが違います（計画: " + String(report.experimentId || "なし") + " / 読み込み中: " + expId + "）");
@@ -2642,86 +2677,201 @@
     if (String(report.packageDefinitionSha256 || "") !== String(db.pkg.definitionSha256 || "")) {
       errors.push("実験定義のSHA-256が一致しません（別の版のパッケージ用の計画です）");
     }
-    if (report.stage && String(report.stage) !== PLAN_STAGE) {
+    if (String(report.stage) !== PLAN_STAGE) {
       errors.push("初回解析の結果ではありません（stage: " + String(report.stage) + "）");
     }
-    if (Array.isArray(report.problems) && report.problems.length) {
+    if (String(report.verdict) !== "resample_required") {
+      errors.push("追加が必要だという判定ではありません（verdict: " + String(report.verdict) + "）");
+    }
+    if (!Array.isArray(report.problems)) {
+      errors.push("計画に指摘の一覧（problems）がありません");
+    } else if (report.problems.length) {
       errors.push("計画側に未解決の指摘が " + report.problems.length + " 件あります");
     }
     var resample = report.resample;
-    if (!resample || typeof resample !== "object" || !Array.isArray(resample.cases) || !resample.cases.length) {
+    if (!resample || typeof resample !== "object" || Array.isArray(resample)) {
+      errors.push("追加の計画（resample）がありません");
+      return reject();
+    }
+    if (String(resample.stage) !== PLAN_STAGE) {
+      errors.push("追加の計画が初回のものではありません（resample.stage: " + String(resample.stage) + "）");
+    }
+    if (resample.required !== true) {
+      errors.push("追加が必要な計画ではありません（resample.required: " + String(resample.required) + "）");
+    }
+    if (resample.exhausted !== false) {
+      errors.push("この計画はすでに使い切られています（resample.exhausted: " + String(resample.exhausted) + "）");
+    }
+    if (!Array.isArray(resample.cases) || !resample.cases.length) {
       errors.push("追加対象のケースがありません");
     }
     var snapshot = report.snapshot;
-    if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.reviewRows) || !snapshot.reviewRows.length) {
-      errors.push("初回提出のスナップショットがありません");
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)
+      || !Array.isArray(snapshot.reviewRows) || !snapshot.reviewRows.length
+      || !Array.isArray(snapshot.comparisons)) {
+      errors.push("初回提出のスナップショット（reviewRows / comparisons）がありません");
     }
-    if (errors.length) return { ok: false, errors: errors };
+    if (errors.length) return reject();
 
-    // 対象ケースはパッケージに実在し、重複しないこと。
+    // --- 対象ケース ------------------------------------------------------
     var targets = [];
-    var seen = Object.create(null);
+    var seenTarget = Object.create(null);
     resample.cases.forEach(function (c) {
       var n = c && c.sourceNo;
       if (typeof n !== "number" || !caseBySourceNo(n)) {
         errors.push("対象ケース No." + String(n) + " はこのパッケージにありません");
         return;
       }
-      if (seen[n]) { errors.push("対象ケース No." + n + " が重複しています"); return; }
-      seen[n] = true;
+      if (seenTarget[n]) { errors.push("対象ケース No." + n + " が重複しています"); return; }
+      seenTarget[n] = true;
       targets.push({ caseId: String(c.caseId || ""), sourceNo: n, deltaAesthetic: c.deltaAesthetic });
     });
+    if (errors.length) return reject();
 
-    // スナップショットの画像が、この端末の記録と1件ずつ一致すること。
-    var locked = Object.create(null);
-    var lockedCount = 0;
-    var byId = Object.create(null);
-    db.images.forEach(function (r) { byId[r.imageId] = r; });
+    // --- 2. レビュー行の照合（今この画面が書き出す内容と1件ずつ） ---------
+    var currentRows = buildReviewRows();
+    var currentByKey = Object.create(null);
+    currentRows.forEach(function (r) {
+      currentByKey[r.experiment.sourceNo + "/" + r.experiment.arm] = r;
+    });
+    var snapByKey = Object.create(null);
     snapshot.reviewRows.forEach(function (row) {
-      (row.images || []).forEach(function (im) {
-        var have = byId[im.imageId];
-        if (!have) {
-          errors.push("初回の画像がこの端末にありません: " + String(im.imageId));
+      var no = row && row.sourceNo;
+      var slot = row && row.slot;
+      var key = no + "/" + slot;
+      if (typeof no !== "number" || !caseBySourceNo(no)) {
+        errors.push("スナップショットに未知のケース No." + String(no) + " があります");
+        return;
+      }
+      if (ARMS.indexOf(String(slot)) < 0) {
+        errors.push("スナップショットに未知の面 " + String(slot) + " があります（No." + no + "）");
+        return;
+      }
+      if (snapByKey[key]) { errors.push("スナップショットの行が重複しています: No." + no + " " + slot); return; }
+      snapByKey[key] = row;
+    });
+    Object.keys(currentByKey).forEach(function (key) {
+      if (!snapByKey[key]) errors.push("この端末にある記録がスナップショットにありません: No." + key.replace("/", " 面"));
+    });
+    Object.keys(snapByKey).forEach(function (key) {
+      if (!currentByKey[key]) errors.push("スナップショットの記録がこの端末にありません: No." + key.replace("/", " 面"));
+    });
+    if (errors.length) return reject();
+
+    var locked = Object.create(null);
+    var evalJobs = [];
+    Object.keys(snapByKey).forEach(function (key) {
+      var was = snapByKey[key];
+      var now = currentByKey[key];
+      var tag = "No." + was.sourceNo + " " + was.slot;
+      if (String(was.reviewId || "") !== String(now.reviewId || "")) {
+        errors.push(tag + ": レビューIDが変わっています");
+      }
+      if (String(was.generationId || "") !== String(now.generationId || "")) {
+        errors.push(tag + ": 生成IDが変わっています");
+      }
+      var wasImages = Array.isArray(was.images) ? was.images : null;
+      if (!wasImages || !wasImages.length) { errors.push(tag + ": スナップショットに画像がありません"); return; }
+      if (wasImages.length !== now.images.length) {
+        errors.push(tag + ": 画像の枚数が初回と違います（" + wasImages.length + " → " + now.images.length + "）");
+        return;
+      }
+      var nowByRank = Object.create(null);
+      now.images.forEach(function (im) { nowByRank[im.rank] = im; });
+      wasImages.forEach(function (im) {
+        var here = nowByRank[im.rank];
+        if (!here) { errors.push(tag + ": 順位 " + String(im.rank) + " の画像がありません"); return; }
+        if (String(here.imageId) !== String(im.imageId)) {
+          errors.push(tag + " 順位 " + im.rank + ": 画像が差し替えられています");
           return;
         }
-        if (isDead(im.imageId)) {
-          errors.push("初回の画像が外されています: " + String(im.imageId));
+        if (!isSha256(im.sha256)) { errors.push(tag + " 順位 " + im.rank + ": 画像のSHA-256がありません"); return; }
+        if (String((here.metadata || {}).sha256 || "") !== String(im.sha256)) {
+          errors.push(tag + " 順位 " + im.rank + ": 画像が差し替えられています");
           return;
         }
-        if (have.rank !== im.rank) {
-          errors.push("初回の画像の順位が変わっています: " + String(im.imageId));
+        if (!isSha256(im.evaluationSha256)) {
+          errors.push(tag + " 順位 " + im.rank + ": 評価のSHA-256がありません");
           return;
         }
-        if (im.sha256 && have.metadata && have.metadata.sha256 !== im.sha256) {
-          errors.push("初回の画像が差し替えられています: " + String(im.imageId));
-          return;
-        }
-        if (!activeReviewFor(im.imageId).active) {
-          errors.push("初回の評価が見つかりません: " + String(im.imageId));
-          return;
-        }
-        locked[im.imageId] = { sourceNo: row.sourceNo, slot: row.slot, rank: im.rank, sha256: im.sha256 || "" };
-        lockedCount += 1;
+        evalJobs.push(sha256Text(JSON.stringify(normalizedEvaluationOf(here))).then(function (hex) {
+          if (hex === null) return "この環境では評価のSHA-256を計算できません（https でお試しください）";
+          if (hex !== im.evaluationSha256) return tag + " 順位 " + im.rank + ": 初回の評価が変わっています";
+          return null;
+        }));
+        locked[im.imageId] = {
+          sourceNo: was.sourceNo, slot: was.slot, rank: im.rank,
+          sha256: im.sha256, evaluationSha256: im.evaluationSha256
+        };
       });
     });
-    if (!lockedCount) errors.push("初回の画像が1枚も照合できませんでした");
-    if (errors.length) return { ok: false, errors: errors };
-
-    return {
-      ok: true,
-      plan: {
-        schemaVersion: "ab-resample-plan.v1",
-        experimentId: expId,
-        packageDefinitionSha256: String(report.packageDefinitionSha256 || ""),
-        stage: PLAN_STAGE,
-        threshold: resample.threshold,
-        addPerArm: PLAN_ADD_PER_ARM_DEFAULT,
-        cases: targets,
-        lockedImages: locked,
-        lockedCount: lockedCount,
-        loadedAt: nowIso()
+    // スナップショットに無い画像が、すでにこの端末へ足されていないか。
+    db.images.forEach(function (r) {
+      if (isDead(r.imageId)) return;
+      if (!Object.prototype.hasOwnProperty.call(locked, r.imageId)) {
+        errors.push("スナップショットに無い画像がすでにあります: No." + r.sourceNo + " " + r.arm + " 順位 " + r.rank);
       }
-    };
+    });
+    if (errors.length) return reject();
+
+    // --- 4. 比較行の照合 --------------------------------------------------
+    var currentCmp = buildComparisonRows();
+    var currentCmpByNo = Object.create(null);
+    currentCmp.forEach(function (c) { currentCmpByNo[c.sourceNo] = c; });
+    var snapCmpByNo = Object.create(null);
+    snapshot.comparisons.forEach(function (c) {
+      var no = c && c.sourceNo;
+      if (typeof no !== "number" || !caseBySourceNo(no)) {
+        errors.push("スナップショットの比較に未知のケース No." + String(no) + " があります");
+        return;
+      }
+      if (snapCmpByNo[no]) { errors.push("スナップショットの比較が重複しています: No." + no); return; }
+      snapCmpByNo[no] = c;
+    });
+    db.pkg.cases.forEach(function (c) {
+      if (!snapCmpByNo[c.sourceNo]) errors.push("スナップショットに No." + c.sourceNo + " の比較がありません");
+      if (!currentCmpByNo[c.sourceNo]) errors.push("この端末に No." + c.sourceNo + " の比較がありません");
+    });
+    Object.keys(currentCmpByNo).forEach(function (no) {
+      if (!snapCmpByNo[no]) errors.push("この端末の比較がスナップショットにありません: No." + no);
+    });
+    if (errors.length) return reject();
+
+    var cmpJobs = [];
+    Object.keys(snapCmpByNo).forEach(function (no) {
+      var was = snapCmpByNo[no];
+      var now = currentCmpByNo[no];
+      if (!isSha256(was.sha256)) { errors.push("No." + no + ": 比較のSHA-256がありません"); return; }
+      cmpJobs.push(sha256Text(JSON.stringify(normalizedComparisonOf(now))).then(function (hex) {
+        if (hex === null) return "この環境では比較のSHA-256を計算できません（https でお試しください）";
+        if (hex !== was.sha256) return "No." + no + ": 初回の比較（対象画像・どちらが良いか・コメント）が変わっています";
+        return null;
+      }));
+    });
+    if (errors.length) return reject();
+
+    return Promise.all(evalJobs.concat(cmpJobs)).then(function (results) {
+      results.forEach(function (r) { if (r && errors.indexOf(r) < 0) errors.push(r); });
+      var lockedCount = Object.keys(locked).length;
+      if (!lockedCount) errors.push("初回の画像が1枚も照合できませんでした");
+      if (errors.length) return { ok: false, errors: errors };
+      return {
+        ok: true,
+        plan: {
+          schemaVersion: "ab-resample-plan.v1",
+          experimentId: expId,
+          packageDefinitionSha256: String(report.packageDefinitionSha256 || ""),
+          stage: PLAN_STAGE,
+          threshold: resample.threshold,
+          addPerArm: PLAN_ADD_PER_ARM_DEFAULT,
+          cases: targets,
+          lockedImages: locked,
+          lockedCount: lockedCount,
+          verifiedAt: nowIso(),
+          loadedAt: nowIso()
+        }
+      };
+    });
   }
 
   function loadResamplePlanFile(file) {
@@ -2732,18 +2882,21 @@
       var parsed;
       try { parsed = JSON.parse(String(reader.result)); }
       catch (e) { status("追加レビュー計画を JSON として読めませんでした: " + (e && e.message)); return; }
-      var built = buildPlanFromReport(parsed);
-      if (!built.ok) {
-        status("この追加レビュー計画は使えません: " + built.errors.slice(0, 3).join(" / "));
-        return;
-      }
-      db.resamplePlan = built.plan;
-      persist();
-      var first = built.plan.cases[0].sourceNo;
-      // goToCase は表示を作り直すときに状況表示を空へ戻す。案内はその後に出す。
-      goToCase(first);
-      status("追加レビュー計画を読み込みました（対象 " + built.plan.cases.length + " ケース・A/B 各 "
-        + planAddPerArm() + " 枚・初回 " + built.plan.lockedCount + " 枚は変更できません）。");
+      status("追加レビュー計画を照合しています…");
+      buildPlanFromReport(parsed).then(function (built) {
+        if (!built.ok) {
+          status("この追加レビュー計画は使えません: " + built.errors.slice(0, 3).join(" / "));
+          return;
+        }
+        db.resamplePlan = built.plan;
+        persist();
+        var first = built.plan.cases[0].sourceNo;
+        // goToCase は表示を作り直すときに状況表示を空へ戻す。案内はその後に出す。
+        goToCase(first);
+        status("追加レビュー計画を読み込みました（対象 " + built.plan.cases.length + " ケース・A/B 各 "
+          + planAddPerArm() + " 枚・初回 " + built.plan.lockedCount + " 枚は変更できません。"
+          + "初回の評価と比較はSHA-256で照合済み）。");
+      });
     };
     reader.onerror = function () { status("追加レビュー計画のファイルを読めませんでした。"); };
     reader.readAsText(file, "utf-8");

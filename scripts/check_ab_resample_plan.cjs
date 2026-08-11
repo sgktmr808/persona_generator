@@ -190,8 +190,38 @@ function buildPackage() {
   return body;
 }
 
-// 初回書き出し(レビューJSONL)から、解析ツールが出すのと同じ形の計画JSONを組む。
-function buildPlanReport(pkg, reviewRows, targets) {
+// 解析器と同じ正規化。ここがずれると「変わっていないのに拒否」になる。
+//  可変値(comparisonId・時刻・supersedes)は入れない。
+function normalizedEvaluation(image) {
+  const e = (image && image.evaluation) || {};
+  return {
+    verdict: String(e.verdict === undefined || e.verdict === null ? "" : e.verdict),
+    aestheticSatisfaction: String(e.aestheticSatisfaction === undefined || e.aestheticSatisfaction === null
+      ? "" : e.aestheticSatisfaction),
+    intentMatch: String(e.intentMatch === undefined || e.intentMatch === null ? "" : e.intentMatch),
+    failures: (e.failures || []).map(String).slice().sort(),
+    priorityChecks: (e.priorityChecks || [])
+      .map((p) => ({ itemId: String(p.itemId), status: String(p.status) }))
+      .sort((a, b) => (a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0)),
+    missingPriorityCount: e.missingPriorityCount === undefined ? null : e.missingPriorityCount,
+    notes: String(image && image.notes !== undefined && image.notes !== null ? image.notes : "")
+  };
+}
+function evaluationSha(image) { return sha(JSON.stringify(normalizedEvaluation(image))); }
+function normalizedComparison(c) {
+  return {
+    sourceNo: c.sourceNo,
+    armGenerationIds: { A: (c.armGenerationIds || {}).A || "", B: (c.armGenerationIds || {}).B || "" },
+    promptSha256: { A: (c.promptSha256 || {}).A || "", B: (c.promptSha256 || {}).B || "" },
+    comparedImageIds: { A: (c.comparedImageIds || {}).A || "", B: (c.comparedImageIds || {}).B || "" },
+    preference: String(c.preference === undefined || c.preference === null ? "" : c.preference),
+    notes: String(c.notes === undefined || c.notes === null ? "" : c.notes)
+  };
+}
+function comparisonSha(c) { return sha(JSON.stringify(normalizedComparison(c))); }
+
+// 初回書き出し(レビューJSONL・比較JSONL)から、解析ツールが出すのと同じ形の計画JSONを組む。
+function buildPlanReport(pkg, reviewRows, comparisonRows, targets) {
   return {
     schemaVersion: "fixture-analysis.v1",
     stage: "initial",
@@ -214,12 +244,34 @@ function buildPlanReport(pkg, reviewRows, targets) {
         images: r.images.map((im) => ({
           imageId: im.imageId, rank: im.rank,
           sha256: im.metadata.sha256,
-          evaluationSha256: sha(JSON.stringify(im.evaluation))
+          evaluationSha256: evaluationSha(im)
         }))
       })),
-      comparisons: []
+      comparisons: comparisonRows.map((c) => ({
+        sourceNo: c.sourceNo, comparisonId: c.comparisonId, sha256: comparisonSha(c)
+      }))
     }
   };
+}
+
+// 「初回の記録が1項目だけ変わっていた」状態を、計画側のハッシュで作る。
+//  画面の記録は正しいまま、スナップショットが別の値を指す = 変化の検出そのもの。
+function planWithEvaluationChange(plan, reviewRows, mutate) {
+  const next = JSON.parse(JSON.stringify(plan));
+  const row = reviewRows[0];
+  const image = JSON.parse(JSON.stringify(row.images[0]));
+  mutate(image);
+  const target = next.snapshot.reviewRows.find(
+    (r) => r.sourceNo === row.experiment.sourceNo && r.slot === row.experiment.arm);
+  target.images.find((im) => im.imageId === image.imageId).evaluationSha256 = evaluationSha(image);
+  return next;
+}
+function planWithComparisonChange(plan, comparisonRows, mutate) {
+  const next = JSON.parse(JSON.stringify(plan));
+  const row = JSON.parse(JSON.stringify(comparisonRows[0]));
+  mutate(row);
+  next.snapshot.comparisons.find((c) => c.sourceNo === row.sourceNo).sha256 = comparisonSha(row);
+  return next;
 }
 
 const PRELUDE = `
@@ -362,7 +414,12 @@ function phaseRound1(pkg) {
     note(rows.length === p.cases.length * 2, "初回のレビュー行が " + rows.length + " 行");
     const total = rows.reduce((a, r) => a + r.images.length, 0);
     note(total === p.cases.length * 4, "初回の画像が " + total + " 枚");
-    return { pass: problems.length === 0, problems, rows: out_rows, reviewRows: rows.length, images: total };
+    const cex = await grabExport("abExportComparisons");
+    const cmp = cex.text.trim().split("\n").filter((l) => l).map((l) => JSON.parse(l));
+    out_cmp = cmp;
+    note(cmp.length === p.cases.length, "初回の比較行が " + cmp.length + " 行");
+    return { pass: problems.length === 0, problems, rows: out_rows, cmp: out_cmp,
+      reviewRows: rows.length, images: total, comparisons: cmp.length };
   })(__ARG__);
 }
 
@@ -384,36 +441,122 @@ function phaseReject(arg) {
       await waitS(/追加レビュー計画/, label);
       return st();
     };
-    const wrongId = JSON.parse(JSON.stringify(a.plan));
-    wrongId.experimentId = "another-experiment";
-    let msg = await load(wrongId, "wrong id");
-    note(/使えません/.test(msg) && /実験IDが違います/.test(msg), "実験ID違いを受け取ってしまった: " + msg);
-    note(store().resamplePlan == null, "実験ID違いの計画が保存された");
+    const refused = [];
+    const mustRefuse = async (obj, label, re) => {
+      const m = await load(obj, label);
+      note(/使えません/.test(m), label + " を受け取ってしまった: " + m);
+      note(re.test(m), label + " の理由が違う: " + m);
+      note(store().resamplePlan == null, label + " が保存された");
+      refused.push(label);
+    };
+    const clone = () => JSON.parse(JSON.stringify(a.plan));
 
-    const wrongDef = JSON.parse(JSON.stringify(a.plan));
-    wrongDef.packageDefinitionSha256 = "0".repeat(64);
-    msg = await load(wrongDef, "wrong definition");
-    note(/実験定義のSHA-256が一致しません/.test(msg), "定義SHA違いを受け取ってしまった: " + msg);
+    // --- 計画そのものの形 ---
+    let p1 = clone(); p1.experimentId = "another-experiment";
+    await mustRefuse(p1, "実験ID違い", /実験IDが違います/);
+    p1 = clone(); p1.packageDefinitionSha256 = "0".repeat(64);
+    await mustRefuse(p1, "実験定義SHA違い", /実験定義のSHA-256が一致しません/);
+    p1 = clone(); delete p1.stage;
+    await mustRefuse(p1, "stage欠落", /初回解析の結果ではありません/);
+    p1 = clone(); p1.stage = "resampled-final";
+    await mustRefuse(p1, "stage違い", /初回解析の結果ではありません/);
+    p1 = clone(); p1.verdict = "final";
+    await mustRefuse(p1, "verdict違い", /追加が必要だという判定ではありません/);
+    p1 = clone(); delete p1.verdict;
+    await mustRefuse(p1, "verdict欠落", /追加が必要だという判定ではありません/);
+    p1 = clone(); delete p1.problems;
+    await mustRefuse(p1, "problems欠落", /指摘の一覧（problems）がありません/);
+    p1 = clone(); p1.problems = "なし";
+    await mustRefuse(p1, "problems非配列", /指摘の一覧（problems）がありません/);
+    p1 = clone(); p1.problems = ["合成の指摘"];
+    await mustRefuse(p1, "problems非空", /未解決の指摘/);
+    p1 = clone(); delete p1.resample.stage;
+    await mustRefuse(p1, "resample.stage欠落", /初回のものではありません/);
+    p1 = clone(); p1.resample.required = false;
+    await mustRefuse(p1, "resample.required=false", /追加が必要な計画ではありません/);
+    p1 = clone(); delete p1.resample.required;
+    await mustRefuse(p1, "resample.required欠落", /追加が必要な計画ではありません/);
+    p1 = clone(); p1.resample.exhausted = true;
+    await mustRefuse(p1, "resample.exhausted=true", /使い切られています/);
+    p1 = clone(); delete p1.resample.exhausted;
+    await mustRefuse(p1, "resample.exhausted欠落", /使い切られています/);
+    p1 = clone(); p1.resample.cases.push({ caseId: "FX-99", sourceNo: 99, deltaAesthetic: -2 });
+    await mustRefuse(p1, "存在しないケース", /このパッケージにありません/);
+    p1 = clone(); delete p1.snapshot.comparisons;
+    await mustRefuse(p1, "snapshot.comparisons欠落", /スナップショット（reviewRows \/ comparisons）がありません/);
 
-    const tampered = JSON.parse(JSON.stringify(a.plan));
-    tampered.snapshot.reviewRows[0].images[0].sha256 = "1".repeat(64);
-    msg = await load(tampered, "tampered image");
-    note(/差し替えられています/.test(msg), "初回画像の差し替えを見逃した: " + msg);
+    // --- 初回の画像 ---
+    p1 = clone(); p1.snapshot.reviewRows[0].images[0].sha256 = "1".repeat(64);
+    await mustRefuse(p1, "初回画像の差し替え", /画像が差し替えられています/);
+    p1 = clone(); delete p1.snapshot.reviewRows[0].images[0].sha256;
+    await mustRefuse(p1, "画像SHA欠落", /画像のSHA-256がありません/);
+    p1 = clone(); p1.snapshot.reviewRows[0].images[0].imageId = "another-image";
+    await mustRefuse(p1, "imageId違い", /画像が差し替えられています/);
+    p1 = clone(); p1.snapshot.reviewRows[0].images[0].rank = 9;
+    await mustRefuse(p1, "rank違い", /順位 9 の画像がありません/);
+    p1 = clone(); delete p1.snapshot.reviewRows[0].images[0].evaluationSha256;
+    await mustRefuse(p1, "評価SHA欠落", /評価のSHA-256がありません/);
+    p1 = clone(); p1.snapshot.reviewRows[0].images[0].evaluationSha256 = "2".repeat(64);
+    await mustRefuse(p1, "評価SHA不一致", /初回の評価が変わっています/);
 
-    const unknownCase = JSON.parse(JSON.stringify(a.plan));
-    unknownCase.resample.cases.push({ caseId: "FX-99", sourceNo: 99, deltaAesthetic: -2 });
-    msg = await load(unknownCase, "unknown case");
-    note(/このパッケージにありません/.test(msg), "存在しないケースを受け取ってしまった: " + msg);
+    // --- 初回の評価（項目ごとに1つずつ変える。正規化に入っていない項目は素通りする） ---
+    p1 = a.evalChanges.verdict;
+    await mustRefuse(p1, "初回評価の判定", /初回の評価が変わっています/);
+    await mustRefuse(a.evalChanges.aesthetic, "初回評価の美的満足度", /初回の評価が変わっています/);
+    await mustRefuse(a.evalChanges.intent, "初回評価の意図一致", /初回の評価が変わっています/);
+    await mustRefuse(a.evalChanges.failures, "初回評価の失敗ラベル", /初回の評価が変わっています/);
+    await mustRefuse(a.evalChanges.priority, "初回評価の重要要素", /初回の評価が変わっています/);
+    await mustRefuse(a.evalChanges.missingCount, "初回評価の未反映数", /初回の評価が変わっています/);
+    await mustRefuse(a.evalChanges.notes, "初回評価のコメント", /初回の評価が変わっています/);
 
-    const withProblems = JSON.parse(JSON.stringify(a.plan));
-    withProblems.problems = ["合成の指摘"];
-    msg = await load(withProblems, "problems");
-    note(/未解決の指摘/.test(msg), "指摘ありの計画を受け取ってしまった: " + msg);
-    note(store().resamplePlan == null, "不正な計画が保存された");
+    // --- 初回の比較 ---
+    await mustRefuse(a.cmpChanges.compared, "初回比較の選択画像", /初回の比較.*が変わっています/);
+    await mustRefuse(a.cmpChanges.preference, "初回比較のどちらが良いか", /初回の比較.*が変わっています/);
+    await mustRefuse(a.cmpChanges.notes, "初回比較のコメント", /初回の比較.*が変わっています/);
+    p1 = clone(); delete p1.snapshot.comparisons[0].sha256;
+    await mustRefuse(p1, "比較SHA欠落", /比較のSHA-256がありません/);
+    p1 = clone(); p1.snapshot.comparisons.splice(0, 1);
+    await mustRefuse(p1, "比較行の欠落", /の比較がありません/);
+    p1 = clone(); p1.snapshot.comparisons.push(JSON.parse(JSON.stringify(p1.snapshot.comparisons[0])));
+    await mustRefuse(p1, "比較行の重複", /比較が重複しています/);
+    p1 = clone(); p1.snapshot.comparisons[0].sourceNo = 99;
+    await mustRefuse(p1, "比較の未知ケース", /比較に未知のケース/);
+
+    // --- レビュー行そのもの ---
+    p1 = clone(); p1.snapshot.reviewRows[0].reviewId = "changed-review-id";
+    await mustRefuse(p1, "reviewId違い", /レビューIDが変わっています/);
+    p1 = clone(); p1.snapshot.reviewRows[0].generationId = "changed-generation-id";
+    await mustRefuse(p1, "generationId違い", /生成IDが変わっています/);
+    p1 = clone(); p1.snapshot.reviewRows.splice(0, 1);
+    await mustRefuse(p1, "レビュー行の欠落", /記録がスナップショットにありません/);
+    p1 = clone(); p1.snapshot.reviewRows.push(JSON.parse(JSON.stringify(p1.snapshot.reviewRows[0])));
+    await mustRefuse(p1, "レビュー行の重複", /行が重複しています/);
+    p1 = clone(); p1.snapshot.reviewRows[0].sourceNo = 99;
+    await mustRefuse(p1, "未知ケースの行", /未知のケース/);
+    p1 = clone(); p1.snapshot.reviewRows[0].slot = "C";
+    await mustRefuse(p1, "未知の面", /未知の面/);
+    p1 = clone(); p1.snapshot.reviewRows[0].images.splice(0, 1);
+    await mustRefuse(p1, "画像の欠落", /枚数が初回と違います/);
+
+    // --- スナップショットに無い画像がすでにある ---
+    byId("abStatus").textContent = "";
+    await goToCaseNo(1);
+    await delay(200);
+    await pickImage("A", "extra-before-plan.png", 7777);
+    note(liveRanks(1, "A").length === 3, "追加画像を置けなかった: " + liveRanks(1, "A"));
+    await mustRefuse(a.plan, "スナップショット外の追加画像", /スナップショットに無い画像がすでにあります/);
+    window.confirm = () => true;
+    byId("abStatus").textContent = "";
+    byId("abRemoveA").click();
+    await waitS(/画像を外しました/, "remove extra");
+    note(liveRanks(1, "A").length === 2, "追加画像を外せなかった: " + liveRanks(1, "A"));
+    out_invalidations = store().invalidations.length;
 
     // 正しい計画は受け取る
-    msg = await load(a.plan, "valid plan");
+    let msg = await load(a.plan, "valid plan");
     note(/読み込みました/.test(msg), "正しい計画を受け取れなかった: " + msg);
+    note(/SHA-256で照合済み/.test(msg), "照合済みだと分かる表示になっていない: " + msg);
+    out_refused = refused;
     const plan = store().resamplePlan;
     note(!!plan, "計画が保存されていない");
     note(plan.cases.length === a.targets.length, "対象ケース数が違う: " + (plan && plan.cases.length));
@@ -421,7 +564,8 @@ function phaseReject(arg) {
     note(byId("abResampleBanner").hidden === false, "追加ラウンドの帯が出ていない");
     note(byId("abNextTarget").hidden === false, "「次の追加対象へ」が出ていない");
     note(a.targets.indexOf(caseNo()) >= 0, "対象ケースへ移動していない: ケース " + caseNo());
-    return { pass: problems.length === 0, problems, opened: caseNo() };
+    return { pass: problems.length === 0, problems, opened: caseNo(),
+      refused: out_refused, invalidations: out_invalidations };
   })(__ARG__);
 }
 
@@ -467,7 +611,7 @@ function phaseFrozen(arg) {
     byId("abRemoveA").click();
     await waitS(/追加ラウンドでは外せません/, "locked removal");
     note(confirmed === 0, "初回画像で確認ダイアログが出た");
-    note(store().invalidations.length === 0, "初回画像が無効化された");
+    note(store().invalidations.length === a.invalidations, "初回画像が無効化された");
 
     byId("abStatus").textContent = "";
     byId("abSaveNext").disabled = false;
@@ -769,11 +913,32 @@ async function main() {
       sha: im.metadata.sha256, verdict: im.evaluation.verdict,
       aes: im.evaluation.aestheticSatisfaction, intent: im.evaluation.intentMatch, notes: im.notes
     }))), []);
-    const plan = buildPlanReport(pkg, r1.rows, TARGETS);
+    const plan = buildPlanReport(pkg, r1.rows, r1.cmp, TARGETS);
+
+    // 初回の記録が1項目だけ変わっていた場合を、計画側のハッシュで再現する。
+    const evalChanges = {
+      verdict: planWithEvaluationChange(plan, r1.rows, (im) => { im.evaluation.verdict = "reject"; }),
+      aesthetic: planWithEvaluationChange(plan, r1.rows, (im) => { im.evaluation.aestheticSatisfaction = "1"; }),
+      intent: planWithEvaluationChange(plan, r1.rows, (im) => { im.evaluation.intentMatch = "5"; }),
+      failures: planWithEvaluationChange(plan, r1.rows, (im) => { im.evaluation.failures = ["anatomy"]; }),
+      priority: planWithEvaluationChange(plan, r1.rows, (im) => {
+        im.evaluation.priorityChecks = (im.evaluation.priorityChecks || []).map((p, i) => ({
+          itemId: p.itemId, status: i === 0 ? "missing" : p.status
+        }));
+      }),
+      missingCount: planWithEvaluationChange(plan, r1.rows, (im) => { im.evaluation.missingPriorityCount = 2; }),
+      notes: planWithEvaluationChange(plan, r1.rows, (im) => { im.notes = "書き換えられたコメント"; })
+    };
+    const cmpChanges = {
+      compared: planWithComparisonChange(plan, r1.cmp, (c) => { c.comparedImageIds.A = "another-image"; }),
+      preference: planWithComparisonChange(plan, r1.cmp, (c) => { c.preference = c.preference === "A" ? "B" : "A"; }),
+      notes: planWithComparisonChange(plan, r1.cmp, (c) => { c.notes = "書き換えられた比較コメント"; })
+    };
 
     const rejected = await run(phaseReject, "plan intake refuses mismatched plans",
-      { plan, targets: TARGETS, lockedCount: initial.length });
-    const frozen = await run(phaseFrozen, "non-target cases stay frozen", { nonTarget: nonTargets[0] });
+      { plan, targets: TARGETS, lockedCount: initial.length, evalChanges, cmpChanges });
+    const frozen = await run(phaseFrozen, "non-target cases stay frozen",
+      { nonTarget: nonTargets[0], invalidations: rejected.invalidations });
     const added = await run(phaseAdd, "target cases accept exactly 2 more per arm at ranks 3,4",
       { targets: TARGETS });
     const nav = await run(phaseNavigate, "next-target walks targets only", { targets: TARGETS });
@@ -805,8 +970,11 @@ async function main() {
       { nonTarget: nonTargets[0] }, 120000);
 
     console.log("R3-FG RESAMPLE PLAN BROWSER ACCEPTANCE PASSED");
-    console.log(`  round 1 recorded ${r1.reviewRows} review rows / ${r1.images} images with no plan loaded`);
-    console.log(`  plan intake refused wrong experimentId / definition sha / tampered image / unknown case / open problems`);
+    console.log(`  round 1 recorded ${r1.reviewRows} review rows / ${r1.images} images / ${r1.comparisons} comparisons with no plan loaded`);
+    console.log(`  plan intake refused ${rejected.refused.length} tampered variants:`);
+    rejected.refused.forEach((label, i) => {
+      if (i % 4 === 0) console.log("    " + rejected.refused.slice(i, i + 4).join(" / "));
+    });
     console.log(`  valid plan accepted: ${TARGETS.length} targets, ${initial.length} initial images locked, opened case ${rejected.opened}`);
     console.log(`  non-target case ${nonTargets[0]}: drop zones disabled, add refused, save refused, initial removal and evaluation locked`);
     console.log(`  targets ${added.visited.join(",")}: +2 per arm at ranks 3,4, third add refused, export blocked mid-round`);
