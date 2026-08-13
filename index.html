@@ -374,6 +374,43 @@
     border: 1px dashed var(--border);
     border-radius: 8px;
   }
+  /* [R4D] 案内付き生成カード */
+  .ab-guided { margin-bottom: 12px; }
+  .ab-guided-head {
+    display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline;
+    justify-content: space-between; min-width: 0;
+  }
+  .ab-guided-phase {
+    font-weight: 700; padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--border); white-space: nowrap;
+  }
+  .ab-guided[data-phase="generation"] .ab-guided-phase { color: #b87931; }
+  .ab-guided[data-phase="evaluation"] .ab-guided-phase { color: #2f7d5a; }
+  .ab-guided[data-phase="done"] .ab-guided-phase { color: #2f7d5a; }
+  .ab-guided-progress { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ab-guided-target {
+    font-size: 1.15em; font-weight: 700; line-height: 1.5; margin-top: 8px;
+    min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal;
+  }
+  .ab-guided-cond { margin-top: 2px; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+  .ab-guided-drop { margin-top: 10px; }
+  .ab-guided-thumbwrap {
+    display: flex; gap: 8px; align-items: center; margin-top: 8px; min-width: 0;
+  }
+  .ab-guided-thumb {
+    width: 64px; height: 64px; object-fit: cover; border-radius: 8px;
+    border: 1px solid var(--border); flex: 0 0 auto;
+  }
+  .ab-guided-msg { margin-top: 8px; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+  .ab-guided-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .ab-guided-secondary {
+    flex: 1 1 auto; min-height: 44px; font-size: 15px; min-width: 0;
+    overflow-wrap: anywhere; white-space: normal;
+  }
+  .ab-guided-done { margin-top: 12px; }
+  .ab-guided-donetext { font-weight: 700; margin-bottom: 8px; line-height: 1.5; }
+  #abGuidedCopy, #abGuidedStartReview { min-height: 44px; font-size: 16px; }
+  .ab-guided-drop .ab-drop-text { line-height: 1.5; }
   .ab-missing { margin-top: 4px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
@@ -656,6 +693,36 @@
         <div id="abResampleBanner" class="ab-resample" hidden></div>
       </div>
 
+      <!-- [R4D] 案内付き生成カード。generationExecution を宣言したパッケージのときだけ出る。 -->
+      <section id="abGuided" class="card ab-guided" hidden>
+        <div class="ab-guided-head">
+          <span id="abGuidedPhase" class="ab-guided-phase">生成中</span>
+          <span id="abGuidedProgress" class="ab-guided-progress"></span>
+        </div>
+        <div id="abGuidedTarget" class="ab-guided-target"></div>
+        <div id="abGuidedCond" class="ab-guided-cond sub"></div>
+        <div class="row">
+          <button id="abGuidedCopy" class="grow primary" type="button">この本文をコピー</button>
+        </div>
+        <label id="abGuidedDrop" class="ab-drop ab-guided-drop" for="abGuidedFile">
+          <span class="ab-drop-text">生成された画像をここへ登録</span>
+          <input id="abGuidedFile" type="file" accept="image/*" class="ab-drop-input" aria-label="生成された画像を登録" />
+        </label>
+        <div id="abGuidedThumbWrap" class="ab-guided-thumbwrap" hidden>
+          <img id="abGuidedThumb" class="ab-guided-thumb" alt="" />
+          <span id="abGuidedThumbNote" class="sub"></span>
+        </div>
+        <div id="abGuidedMsg" class="ab-guided-msg sub" role="status"></div>
+        <div class="ab-guided-actions">
+          <button id="abGuidedRetry" class="ab-guided-secondary" type="button">生成に失敗した（技術的失敗を記録）</button>
+          <button id="abGuidedInspect" class="ab-guided-secondary" type="button">生成済み画像を確認</button>
+        </div>
+        <div id="abGuidedDone" class="ab-guided-done" hidden>
+          <div id="abGuidedDoneText" class="ab-guided-donetext"></div>
+          <button id="abGuidedStartReview" class="grow primary" type="button">評価を始める</button>
+        </div>
+      </section>
+
       <div id="abWork" class="ab-work">
         <section class="card ab-side" data-ab-side="A">
           <div class="ab-side-head">
@@ -716,7 +783,7 @@
         </section>
       </div>
 
-      <div class="card ab-verdict-card">
+      <div id="abVerdictCard" class="card ab-verdict-card">
         <label class="field-label" for="abPreference">A と B、どちらが良いか</label>
         <select id="abPreference" aria-label="どちらが良いか">
           <option value="">（選んでください）</option>
@@ -2085,7 +2152,13 @@
     // レビューJSONLへ書き出した(= 提出した)画像。以後は外せない。
     exportedImageIds: [],
     // 追加レビュー計画(任意)。読み込むまでは null で、通常の初回レビューと完全に同じ挙動。
-    resamplePlan: null
+    resamplePlan: null,
+    // [R4D] 案内付き生成。generationExecution を宣言したパッケージのときだけ使う。
+    //  phase は 'generation' | 'evaluation'。宣言の無いパッケージでは常に null で、
+    //  従来の動作から1つも分岐しない。
+    phase: null,
+    // 技術的失敗の記録(使える画像が出なかった生成)。レビュー画像レコードは作らない。
+    guidedRetries: []
   };
   var ui = {
     sourceNo: null,
@@ -2170,7 +2243,9 @@
         comparisons: db.comparisons,
         invalidations: db.invalidations,
         exportedImageIds: db.exportedImageIds,
-        resamplePlan: db.resamplePlan
+        resamplePlan: db.resamplePlan,
+        phase: db.phase,
+        guidedRetries: db.guidedRetries
       }));
       return true;
     } catch (e) {
@@ -2190,6 +2265,9 @@
       db.reviews = parsed.reviews || [];
       db.reviewDrafts = parsed.reviewDrafts && typeof parsed.reviewDrafts === "object"
         ? parsed.reviewDrafts : Object.create(null);
+      // [R4D] 宣言の無いパッケージでは phase は null のまま(従来の挙動)。
+      db.phase = parsed.phase === "evaluation" || parsed.phase === "generation" ? parsed.phase : null;
+      db.guidedRetries = Array.isArray(parsed.guidedRetries) ? parsed.guidedRetries : [];
       // comparisonDrafts は後方互換の追加項目。持たない既存記録は空で始める。
       db.comparisonDrafts = parsed.comparisonDrafts && typeof parsed.comparisonDrafts === "object"
         ? parsed.comparisonDrafts : Object.create(null);
@@ -2571,10 +2649,14 @@
   }
   function nextIncompleteFrom(sourceNo) {
     if (!db.pkg) return null;
-    var start = caseIndex(sourceNo);
-    var n = db.pkg.cases.length;
+    // [R4D] 案内付きパッケージの評価フェーズでは、未完了の探索も評価順で行う。
+    var ordered = (guidedEnabled() && guidedPhase() === "evaluation")
+      ? evaluationOrderedCases() : db.pkg.cases;
+    var start = 0;
+    for (var i = 0; i < ordered.length; i += 1) if (ordered[i].sourceNo === sourceNo) { start = i; break; }
+    var n = ordered.length;
     for (var step = 1; step <= n; step += 1) {
-      var c = db.pkg.cases[(start + step) % n];
+      var c = ordered[(start + step) % n];
       if (!isComplete(c.sourceNo)) return c.sourceNo;
     }
     return null;
@@ -3359,6 +3441,188 @@
     return true;
   }
 
+  // ---------------------------------------------------------------------------
+  // [R4D] 案内付き生成（generationExecution）
+  //  パッケージが凍結済みの48ステップ実行キューを宣言したときだけ動く。
+  //  宣言の無い既存パッケージでは guidedEnabled() が false になり、
+  //  ここから下の分岐はすべて素通りする(従来の挙動を1つも変えない)。
+  // ---------------------------------------------------------------------------
+  function guidedContract() {
+    var g = db.pkg && db.pkg.experiment && db.pkg.experiment.generationExecution;
+    return (g && Array.isArray(g.items) && g.items.length) ? g : null;
+  }
+  function guidedEnabled() { return !!guidedContract(); }
+  function guidedQueue() { var g = guidedContract(); return g ? g.items : []; }
+
+  // 進捗は保存済み画像から毎回導く。可変カウンタに頼らない
+  // (再読み込み・別端末からの取り込み・記録の取り消しでも同じ答えになる)。
+  function guidedKey(sourceNo, slot, rank) { return sourceNo + "/" + slot + "/" + rank; }
+  function guidedDoneMap() {
+    var map = Object.create(null);
+    if (!guidedEnabled()) return map;
+    var invalid = Object.create(null);
+    (db.invalidations || []).forEach(function (v) { if (v && v.imageId) invalid[v.imageId] = true; });
+    (db.images || []).forEach(function (r) {
+      if (invalid[r.imageId]) return;
+      map[guidedKey(r.sourceNo, r.arm, r.rank)] = r;
+    });
+    return map;
+  }
+  function guidedNextIndex() {
+    if (!guidedEnabled()) return -1;
+    var done = guidedDoneMap();
+    var q = guidedQueue();
+    for (var i = 0; i < q.length; i += 1) {
+      if (!done[guidedKey(q[i].sourceNo, q[i].slot, q[i].rank)]) return i;
+    }
+    return -1;
+  }
+  function guidedRegisteredCount() {
+    if (!guidedEnabled()) return 0;
+    var done = guidedDoneMap();
+    return guidedQueue().filter(function (it) {
+      return !!done[guidedKey(it.sourceNo, it.slot, it.rank)];
+    }).length;
+  }
+  function guidedComplete() { return guidedEnabled() && guidedNextIndex() === -1; }
+  function guidedPhase() {
+    if (!guidedEnabled()) return null;
+    if (db.phase === "evaluation") return "evaluation";
+    return "generation";
+  }
+  // 生成フェーズの間は、通常のA/B投入口・評価入力・比較を止める。
+  function guidedGenerationActive() { return guidedEnabled() && guidedPhase() === "generation"; }
+
+  function guidedCaseFor(sourceNo) { return caseBySourceNo(sourceNo); }
+  function guidedPromptFor(item) {
+    var c = guidedCaseFor(item.sourceNo);
+    return c ? c.arms[item.slot].prompt : "";
+  }
+  function guidedConditionText() {
+    var gc = db.pkg && db.pkg.experiment && db.pkg.experiment.generationConditions;
+    if (!gc) return "";
+    var seed = gc.seedSupport === "unsupported" ? "Seed非対応"
+      : (gc.seedSupport === "supported" ? "Seed対応" : String(gc.seedSupport || ""));
+    return [gc.model || gc.provider || "", seed].filter(Boolean).join(" / ");
+  }
+  // 同一実験の中で、生きている画像のSHA-256が重複していないか
+  function guidedDuplicateOf(sha) {
+    var invalid = Object.create(null);
+    (db.invalidations || []).forEach(function (v) { if (v && v.imageId) invalid[v.imageId] = true; });
+    var hit = null;
+    (db.images || []).forEach(function (r) {
+      if (invalid[r.imageId]) return;
+      if (r.metadata && r.metadata.sha256 === sha) hit = r;
+    });
+    return hit;
+  }
+
+  function guidedRegister(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    var input = el("abGuidedFile");
+    function clearInput() { if (input) input.value = ""; }
+    if (!files.length) return Promise.resolve();
+    // 案内付き投入口は1枚だけ受け付ける。複数選択は誤登録の温床なので取り込まない。
+    if (files.length > 1) {
+      clearInput();
+      guidedMsg("この投入口は1枚だけ受け付けます。1枚ずつ登録してください。", true);
+      return Promise.resolve();
+    }
+    var idx = guidedNextIndex();
+    if (idx < 0) { clearInput(); guidedMsg("48枚すべて登録済みです。", false); render(); return Promise.resolve(); }
+    var item = guidedQueue()[idx];
+    var cond = ensureConditionRow(item.sourceNo);
+    if (!cond) { clearInput(); guidedMsg("生成元を登録できませんでした。", true); return Promise.resolve(); }
+    var file = files[0];
+    return sha256File(file).then(function (sha) {
+      if (!sha) { guidedMsg("この画像のハッシュを計算できませんでした（httpsでお試しください）。", true); clearInput(); return null; }
+      var dup = guidedDuplicateOf(sha);
+      if (dup) {
+        guidedMsg("同じ画像が既に " + dup.sourceNo + " / " + dup.arm + " / " + dup.rank + "枚目 に登録されています。別の画像を登録してください。", true);
+        clearInput();
+        return null;
+      }
+      var c = guidedCaseFor(item.sourceNo);
+      var row = {
+        imageId: c.arms[item.slot].generationId + "-img-" + makeId("x"),
+        experimentId: db.pkg.experiment.experimentId,
+        caseKey: caseKeyOf(item.sourceNo),
+        sourceNo: item.sourceNo,
+        arm: item.slot,
+        armRole: c.arms[item.slot].role || (item.slot === "A" ? "control" : "treatment"),
+        armGenerationId: c.arms[item.slot].generationId,
+        baselineGenerationId: c.baselineGenerationId,
+        conditionId: cond.conditionId,
+        rank: item.rank,
+        guidedSequence: item.sequence,
+        metadata: {
+          name: file.name,
+          type: file.type || "",
+          size: typeof file.size === "number" ? file.size : 0,
+          lastModified: typeof file.lastModified === "number" ? file.lastModified : 0,
+          sha256: sha
+        },
+        ts: nowIso()
+      };
+      db.images.push(row);
+      persist();
+      setPreview(row.imageId, file);
+      return putImageBlob(row.imageId, file).then(function () { return row; }, function () { return row; });
+    }, function () {
+      guidedMsg("この画像を読み取れませんでした。", true);
+      clearInput();
+      return null;
+    }).then(function (row) {
+      clearInput();
+      if (!row) { render(); return; }
+      guidedMsg("登録しました: " + row.caseKey + "・" + row.arm + "・" + row.rank + "枚目", false);
+      guidedLastThumb = { imageId: row.imageId, note: row.metadata.name };
+      render();
+    });
+  }
+
+  var guidedLastThumb = null;
+  function guidedMsg(text, isError) {
+    var n = el("abGuidedMsg");
+    if (!n) return;
+    n.textContent = text || "";
+    n.setAttribute("data-ab-guided-error", isError ? "true" : "false");
+  }
+
+  function guidedRecordRetry(reasonCode, note) {
+    var idx = guidedNextIndex();
+    if (idx < 0) return;
+    var item = guidedQueue()[idx];
+    db.guidedRetries.push({
+      sequence: item.sequence,
+      caseId: item.caseId,
+      sourceNo: item.sourceNo,
+      slot: item.slot,
+      rank: item.rank,
+      reasonCode: String(reasonCode || "unusable_output"),
+      note: String(note || ""),
+      ts: nowIso()
+    });
+    persist();
+    // キューは進めない。使える画像が1枚登録されるまで同じ手順に留まる。
+    guidedMsg("技術的失敗を記録しました。同じ手順のまま、もう一度生成してください。", false);
+    render();
+  }
+
+  // 評価順(evaluationOrder)での並び。宣言が無いパッケージでは従来のケース順。
+  function evaluationOrderedCases() {
+    if (!db.pkg) return [];
+    var list = db.pkg.cases.slice();
+    var hasOrder = list.every(function (c) { return typeof c.evaluationOrder === "number"; });
+    if (!guidedEnabled() || !hasOrder) return list;
+    return list.sort(function (a, b) { return a.evaluationOrder - b.evaluationOrder; });
+  }
+  function evaluationIndexOf(sourceNo) {
+    var list = evaluationOrderedCases();
+    for (var i = 0; i < list.length; i += 1) if (list[i].sourceNo === sourceNo) return i;
+    return -1;
+  }
+
   function buildReviewForm(arm) {
     var host = el("abReview" + arm);
     if (!host || !db.pkg) return;
@@ -3707,8 +3971,11 @@
     setText("abCaseState", st.label);
     var node = el("abCaseState");
     if (node) node.setAttribute("data-ab-state", st.key);
-    disable("abPrev", caseIndex(ui.sourceNo) <= 0);
-    disable("abNext", caseIndex(ui.sourceNo) >= db.pkg.cases.length - 1);
+    var navAt = (guidedEnabled() && guidedPhase() === "evaluation")
+      ? evaluationIndexOf(ui.sourceNo) : caseIndex(ui.sourceNo);
+    var navLen = db.pkg.cases.length;
+    disable("abPrev", navAt <= 0);
+    disable("abNext", navAt >= navLen - 1);
     disable("abJumpIncomplete", nextIncompleteFrom(ui.sourceNo) === null);
     renderResampleBanner();
   }
@@ -3995,6 +4262,95 @@
         + (incomplete.length > 8 ? " ほか" + (incomplete.length - 8) + "件" : "") : "　すべて完了"));
   }
 
+  // [R4D] 案内付き生成カードの描画。宣言の無いパッケージではカードごと隠す。
+  function renderGuided() {
+    var card = el("abGuided");
+    if (!card) return;
+    if (!guidedEnabled()) { card.hidden = true; return; }
+    card.hidden = false;
+    var q = guidedQueue();
+    var total = q.length;
+    var doneCount = guidedRegisteredCount();
+    var phase = guidedPhase();
+    var complete = guidedComplete();
+    card.setAttribute("data-phase", phase === "evaluation" ? "evaluation" : (complete ? "done" : "generation"));
+    setText("abGuidedPhase", phase === "evaluation" ? "評価中" : (complete ? "生成完了" : "生成中"));
+
+    if (phase === "evaluation") {
+      var list = evaluationOrderedCases();
+      var pos = evaluationIndexOf(ui.sourceNo);
+      setText("abGuidedProgress", "評価順 " + (pos < 0 ? 1 : pos + 1) + " / " + list.length);
+      var cur = caseBySourceNo(ui.sourceNo);
+      setText("abGuidedTarget", cur ? ("ケース " + (cur.caseId || ("No." + cur.sourceNo))) : "");
+      setText("abGuidedCond", "評価は事前登録された順番で進みます。前後の移動もこの順番です。");
+      show("abGuidedCopy", false);
+      show("abGuidedDrop", false);
+      show("abGuidedThumbWrap", false);
+      show("abGuidedRetry", false);
+      show("abGuidedInspect", false);
+      show("abGuidedDone", false);
+      guidedMsg("", false);
+      return;
+    }
+
+    setText("abGuidedProgress", doneCount + " / " + total + " 枚 登録済み");
+    show("abGuidedRetry", !complete);
+    show("abGuidedInspect", true);
+    show("abGuidedCopy", !complete);
+    show("abGuidedDrop", !complete);
+
+    if (complete) {
+      setText("abGuidedTarget", total + " / " + total + " 生成画像登録完了");
+      setText("abGuidedCond", "登録先の重複・欠落はありません。次は評価に進みます。");
+      show("abGuidedThumbWrap", false);
+      show("abGuidedDone", true);
+      setText("abGuidedDoneText",
+        total + " 枚すべてが正しいケース・A/B・順位へ登録されました。評価を始めると、事前登録された評価順で案内します。");
+      return;
+    }
+
+    show("abGuidedDone", false);
+    var idx = guidedNextIndex();
+    var item = q[idx];
+    setText("abGuidedTarget",
+      "画像生成 " + item.sequence + " / " + total + "　ケース " + item.caseId + "・" + item.slot + "・" + item.rank + "枚目");
+    var cond = guidedConditionText();
+    setText("abGuidedCond", cond ? ("生成条件: " + cond + "（固定）") : "");
+
+    // 直前に登録した画像のサムネイル
+    var wrap = el("abGuidedThumbWrap");
+    var img = el("abGuidedThumb");
+    var thumbUrl = guidedLastThumb ? ui.previews[guidedLastThumb.imageId] : null;
+    if (thumbUrl) {
+      if (img) img.src = thumbUrl;
+      setText("abGuidedThumbNote", "直前に登録: " + (guidedLastThumb.note || ""));
+      if (wrap) wrap.hidden = false;
+    } else if (wrap) {
+      wrap.hidden = true;
+    }
+  }
+
+  // 生成フェーズの間は、キューを迂回できる導線を止める。
+  function applyGuidedGating() {
+    if (!guidedEnabled()) return;
+    var generating = guidedGenerationActive();
+    // 通常のA/B投入口(複数選択可)は、案内付きキューを飛ばせてしまうので生成中は塞ぐ。
+    ARMS.forEach(function (arm) {
+      var drop = el("abDrop" + arm);
+      var input = el("abFile" + arm);
+      if (drop) drop.hidden = generating;
+      if (input) input.disabled = generating;
+    });
+    // 生成と視覚判断を分ける。生成中は評価入力・比較・保存を出さない。
+    ["abReviewA", "abReviewB"].forEach(function (id) { show(id, !generating); });
+    ["abPreference", "abCompareNotes", "abSaveNext"].forEach(function (id) {
+      var n = el(id);
+      if (n) { n.disabled = generating; }
+    });
+    var verdictCard = el("abVerdictCard");
+    if (verdictCard) verdictCard.hidden = generating;
+  }
+
   function render() {
     if (!db.pkg) {
       show("abIntro", true);
@@ -4009,9 +4365,11 @@
     if (needsSetup) { renderSetup(); return; }
     if (ui.sourceNo == null && db.pkg.cases.length) ui.sourceNo = db.pkg.cases[0].sourceNo;
     applyPackageText();
+    renderGuided();
     renderHeader();
     ARMS.forEach(renderSide);
     renderFlow();
+    applyGuidedGating();
     renderComparisonState();
     renderExportSummary();
   }
@@ -4103,6 +4461,15 @@
 
   function stepCase(delta) {
     if (!db.pkg) return;
+    // [R4D] 案内付きパッケージの評価フェーズでは、事前登録された評価順で前後する。
+    if (guidedEnabled() && guidedPhase() === "evaluation") {
+      var list = evaluationOrderedCases();
+      var at = evaluationIndexOf(ui.sourceNo);
+      var to = (at < 0 ? 0 : at) + delta;
+      if (to < 0 || to >= list.length) return;
+      goToCase(list[to].sourceNo);
+      return;
+    }
     var next = caseIndex(ui.sourceNo) + delta;
     if (next < 0 || next >= db.pkg.cases.length) return;
     goToCase(db.pkg.cases[next].sourceNo);
@@ -4663,6 +5030,12 @@
     db.comparisons = []; db.invalidations = []; db.exportedImageIds = [];
     // 記録を消したら、初回提出を指していた追加レビュー計画も成り立たない。
     db.resamplePlan = null;
+    // [R4D] 画像を全部消したのにフェーズが「評価中」のまま残ると、0枚の状態で
+    //  評価画面に閉じ込められる。案内付き生成の進捗も記録から導く以上、
+    //  記録を消したらフェーズと失敗記録も初期状態へ戻す。
+    db.phase = null;
+    db.guidedRetries = [];
+    guidedLastThumb = null;
     // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
     // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。
     db.defaultCondition = null;
@@ -4825,6 +5198,33 @@
         setVal("abSeed", db.defaultCondition.seedSupport === "supported" ? db.defaultCondition.imageSeed : "");
       }
       render();
+    });
+
+    // [R4D] 案内付き生成の操作
+    on("abGuidedCopy", "click", function () {
+      var idx = guidedNextIndex();
+      if (idx < 0) return;
+      var item = guidedQueue()[idx];
+      copyText(guidedPromptFor(item), item.caseId + "・" + item.slot + "・" + item.rank + "枚目の本文");
+      guidedMsg("本文をコピーしました（" + item.caseId + "・" + item.slot + "・" + item.rank
+        + "枚目）。生成したら下へ登録してください。", false);
+    });
+    on("abGuidedFile", "change", function (e) { guidedRegister(e.target.files); });
+    on("abGuidedRetry", "click", function () {
+      guidedRecordRetry("unusable_output", "");
+    });
+    on("abGuidedInspect", "click", function () {
+      var done = guidedRegisteredCount();
+      guidedMsg("登録済み " + done + " 枚。ケースを移動すると各ケースの登録内容を確認できます（キューの順番は変わりません）。", false);
+    });
+    on("abGuidedStartReview", "click", function () {
+      if (!guidedComplete()) { guidedMsg("48枚すべての登録が終わるまで評価を始められません。", true); return; }
+      db.phase = "evaluation";
+      persist();
+      var first = evaluationOrderedCases()[0];
+      if (first) goToCase(first.sourceNo);
+      render();
+      status("評価を始めます。事前登録された評価順で案内します。");
     });
 
     on("abPrev", "click", function () { stepCase(-1); });
