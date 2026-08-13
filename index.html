@@ -329,6 +329,51 @@
   }
   .ab-priority-select { width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px; }
   .ab-priority-item[data-ab-priority-answered="false"] { border-color: #b87931; }
+  /* 合焦対象の反映(focusAssessment)。宣言したパッケージのときだけ出る。
+     項目の文が長くても片側だけ崩れないよう、必ず折り返して縦に積む。 */
+  .ab-focus { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ab-focus-target {
+    font-size: .92em;
+    line-height: 1.5;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .ab-focus-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .ab-focus-label {
+    font-size: .92em;
+    line-height: 1.5;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+  }
+  .ab-focus-select { width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px; }
+  .ab-focus-item[data-ab-focus-answered="false"] { border-color: #b87931; }
+  .ab-focus-item[data-ab-focus-disabled="true"] { opacity: .62; }
+  .ab-focus-derived {
+    font-size: .92em;
+    line-height: 1.5;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+    padding: 6px 8px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+  }
   .ab-missing { margin-top: 4px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
@@ -2325,6 +2370,26 @@
       }
     });
 
+    // 合焦ルーブリックを求めるパッケージは、全ケースが使える形かを検査する。
+    //  ここを通らないものは作業台へ載せない。壊れたルーブリックを黙って捨てて続行しない
+    //  (捨てると「全項目に答えた」が実際には項目の欠けた状態で成立してしまう)。
+    if (pkg.policy && pkg.policy.focusRubricRequired === true) {
+      pkg.cases.forEach(function (c, i) {
+        var at = "cases[" + i + "].focusRubric";
+        var r = c && c.focusRubric;
+        if (!r || typeof r !== "object") {
+          errors.push({ field: at, reason: "合焦ルーブリックを求めるパッケージだが、このケースに focusRubric が無い" });
+          return;
+        }
+        if (typeof r.targetLabel !== "string" || !r.targetLabel) {
+          errors.push({ field: at + ".targetLabel", reason: "必須（空でない文字列）" });
+        }
+        if (typeof r.separationRequired !== "boolean") {
+          errors.push({ field: at + ".separationRequired", reason: "必須（true / false）" });
+        }
+      });
+    }
+
     // 優先項目チェックを求めるパッケージは、意味の面まで検査する。
     //  ここを通らないものは作業台へ載せない。壊れた項目を黙って捨てて続行しない
     //  (捨てると「全項目に答えた」が実際には項目が欠けている状態で成立してしまう)。
@@ -2630,7 +2695,7 @@
   //  可変値(reviewId の時刻・comparisonId・supersedes・書き出し時刻)は入れない。
   function normalizedEvaluationOf(image) {
     var e = (image && image.evaluation) || {};
-    return {
+    var out = {
       verdict: String(e.verdict === undefined || e.verdict === null ? "" : e.verdict),
       aestheticSatisfaction: String(e.aestheticSatisfaction === undefined || e.aestheticSatisfaction === null
         ? "" : e.aestheticSatisfaction),
@@ -2642,6 +2707,20 @@
       missingPriorityCount: e.missingPriorityCount === undefined ? null : e.missingPriorityCount,
       notes: String(image && image.notes !== undefined && image.notes !== null ? image.notes : "")
     };
+    // 合焦ルーブリックを持つ記録にだけ足す。持たない記録へ null を入れると
+    // 正規化文字列が変わり、既存パッケージの evaluationSha256 が過去の解析JSONと
+    // 一致しなくなる(= 後方互換が壊れる)。キーごと出さないのが正しい。
+    if (e.focusAssessment) {
+      out.focusAssessment = {
+        targetLabel: String(e.focusAssessment.targetLabel || ""),
+        separationRequired: !!e.focusAssessment.separationRequired,
+        targetVisibility: String(e.focusAssessment.targetVisibility || ""),
+        targetSharpness: String(e.focusAssessment.targetSharpness || ""),
+        depthSeparation: String(e.focusAssessment.depthSeparation || ""),
+        derivedFocusStatus: String(e.focusAssessment.derivedFocusStatus || "")
+      };
+    }
+    return out;
   }
   function normalizedComparisonOf(c) {
     return {
@@ -3047,6 +3126,239 @@
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // 合焦対象の反映(focusAssessment)
+  //  パッケージが policy.focusRubricRequired を宣言し、そのケースが focusRubric を
+  //  持つときだけ出す。宣言の無い既存パッケージは従来どおり何も増えない。
+  //  レビュアーが答えるのは「見えているか / 鮮明か / 前後との差が見えるか」の3点だけで、
+  //  present / missing / unclear / target_not_visible は必ず計算で出す(直接選ばせない)。
+  // ---------------------------------------------------------------------------
+  // not_visible と indeterminate は別の状態である。
+  //  not_visible   = 対象がそこに「無い」(画面外・完全に隠れている)
+  //  indeterminate = 対象の有無や合焦を画像から「決められない」
+  //  片方の文言へ「判別できない」を混ぜると、レビュアーが不確実性を対象の不在として
+  //  記録してしまい、一次集計の target_not_visible と unclear が混ざる。
+  var FOCUS_VISIBILITY = [
+    { value: "visible", label: "画面内に見えている" },
+    { value: "not_visible", label: "画面内に存在しない／顔が完全に隠れている" },
+    { value: "indeterminate", label: "画像から存在・合焦を判断できない" }
+  ];
+  var FOCUS_JUDGEMENT = [
+    { value: "pass", label: "満たしている" },
+    { value: "fail", label: "満たしていない" },
+    { value: "indeterminate", label: "判断できない" }
+  ];
+  var FOCUS_FIELDS = ["targetVisibility", "targetSharpness", "depthSeparation"];
+  var FOCUS_DERIVED_LABEL = {
+    present: "present（反映されている）",
+    missing: "missing（反映されていない）",
+    unclear: "unclear（画像から判断できない）",
+    target_not_visible: "target_not_visible（対象が画面内に存在しない）",
+    "": "—（未入力）"
+  };
+
+  function focusRequired() {
+    return !!(db.pkg && db.pkg.policy && db.pkg.policy.focusRubricRequired === true);
+  }
+  function focusRubricFor(sourceNo) {
+    if (!focusRequired()) return null;
+    var c = caseBySourceNo(sourceNo);
+    return c && c.focusRubric && c.focusRubric.targetLabel ? c.focusRubric : null;
+  }
+  function focusSeparationRequired(sourceNo) {
+    var r = focusRubricFor(sourceNo);
+    return !!(r && r.separationRequired === true);
+  }
+
+  // 導出のみ。レビュアーはこの値を選べない。
+  //  present            : 対象が見えていて、鮮明で、必要な前後差も満たしている
+  //  missing            : 対象は見えているが鮮明でない、または必要な前後差を満たしていない
+  //  unclear            : 必要な判断のどれかが indeterminate
+  //  target_not_visible : 対象が画面内に無い
+  function deriveFocusStatus(values, separationRequired) {
+    var v = String((values && values.targetVisibility) || "");
+    var s = String((values && values.targetSharpness) || "");
+    var d = String((values && values.depthSeparation) || "");
+    if (!v) return "";
+    if (v === "not_visible") return "target_not_visible";
+    if (v === "indeterminate") return "unclear";
+    // ここから先は v === "visible"
+    if (!s) return "";
+    if (separationRequired && !d) return "";
+    if (s === "fail") return "missing";
+    if (separationRequired && d === "fail") return "missing";
+    if (s === "indeterminate") return "unclear";
+    if (separationRequired && d === "indeterminate") return "unclear";
+    return "present";
+  }
+
+  // 前後差が要らないケースでは not_applicable を機械的に入れる。
+  // 対象が見えていないときは鮮明さ・前後差を問わない(矛盾した組み合わせを作らせない)。
+  function normalizeFocusValues(raw, separationRequired) {
+    var v = String((raw && raw.targetVisibility) || "");
+    var out = {
+      targetVisibility: v,
+      targetSharpness: String((raw && raw.targetSharpness) || ""),
+      depthSeparation: String((raw && raw.depthSeparation) || "")
+    };
+    if (v === "not_visible" || v === "indeterminate") {
+      out.targetSharpness = "not_applicable";
+      out.depthSeparation = "not_applicable";
+      return out;
+    }
+    if (!separationRequired) out.depthSeparation = "not_applicable";
+    return out;
+  }
+  function focusFieldDisabled(field, values, separationRequired) {
+    var v = String((values && values.targetVisibility) || "");
+    if (field === "targetVisibility") return false;
+    if (v === "not_visible" || v === "indeterminate") return true;
+    if (field === "depthSeparation" && !separationRequired) return true;
+    return false;
+  }
+
+  var focusFormSignature = { A: null, B: null };
+  function focusFormSig(rubric) {
+    return rubric ? JSON.stringify([String(rubric.targetLabel), !!rubric.separationRequired]) : "null";
+  }
+  function syncFocusForm(arm) {
+    var rubric = focusRubricFor(ui.sourceNo);
+    var sig = focusFormSig(rubric);
+    if (focusFormSignature[arm] === sig) return false;
+    focusFormSignature[arm] = sig;
+    var head = el(reviewFieldId(arm, "focusHead"));
+    var list = el(reviewFieldId(arm, "focus"));
+    if (!list) return false;
+    clear(list);
+    show(reviewFieldId(arm, "focusHead"), !!rubric);
+    if (head) head.textContent = "合焦対象の反映";
+    if (!rubric) return true;
+
+    var target = document.createElement("div");
+    target.className = "ab-focus-target";
+    target.id = reviewFieldId(arm, "focusTarget");
+    target.textContent = "この画像で見るべき合焦対象: " + rubric.targetLabel
+      + (rubric.separationRequired ? "（前後との鮮明度差も見る）" : "（前後との鮮明度差は問わない）");
+    list.appendChild(target);
+
+    [["targetVisibility", "対象は画面内に見えているか", FOCUS_VISIBILITY],
+     ["targetSharpness", "対象が画面内で最も鮮明、または主たる合焦面になっているか", FOCUS_JUDGEMENT],
+     ["depthSeparation", "指定された前景・背景との鮮明度差が視認できるか", FOCUS_JUDGEMENT]
+    ].forEach(function (spec) {
+      var row = document.createElement("div");
+      row.className = "ab-focus-item";
+      row.setAttribute("data-ab-focus-field", spec[0]);
+      row.setAttribute("data-ab-focus-answered", "false");
+      var label = document.createElement("div");
+      label.className = "ab-focus-label";
+      label.textContent = spec[1];
+      var sel = document.createElement("select");
+      sel.className = "ab-focus-select";
+      sel.id = reviewFieldId(arm, "focus_" + spec[0]);
+      sel.setAttribute("aria-label", spec[1]);
+      sel.appendChild(option("（選んでください）", ""));
+      spec[2].forEach(function (s) { sel.appendChild(option(s.label, s.value)); });
+      sel.appendChild(option("該当なし", "not_applicable"));
+      row.appendChild(label);
+      row.appendChild(sel);
+      list.appendChild(row);
+    });
+
+    var derived = document.createElement("div");
+    derived.className = "ab-focus-derived";
+    derived.id = reviewFieldId(arm, "focusDerived");
+    derived.textContent = "判定（自動）: " + FOCUS_DERIVED_LABEL[""];
+    list.appendChild(derived);
+    return true;
+  }
+
+  function collectFocus(arm) {
+    var out = Object.create(null);
+    var list = el(reviewFieldId(arm, "focus"));
+    if (!list) return out;
+    var rows = list.querySelectorAll("[data-ab-focus-field]");
+    // ルーブリックの無いパッケージでは行が1つも無い。ここで正規化すると
+    // depthSeparation="not_applicable" を勝手に作ってしまい、保存済みの記録と
+    // 見比べたときに「変更あり」と誤判定して従来パッケージのケースが完了しなくなる。
+    if (!rows.length) return out;
+    for (var i = 0; i < rows.length; i += 1) {
+      var sel = rows[i].querySelector("select");
+      out[rows[i].getAttribute("data-ab-focus-field")] = sel ? sel.value : "";
+    }
+    return normalizeFocusValues(out, focusSeparationRequired(ui.sourceNo));
+  }
+  function setFocus(arm, values) {
+    var list = el(reviewFieldId(arm, "focus"));
+    if (!list) return;
+    var sep = focusSeparationRequired(ui.sourceNo);
+    var v = normalizeFocusValues(values || Object.create(null), sep);
+    var rows = list.querySelectorAll("[data-ab-focus-field]");
+    for (var i = 0; i < rows.length; i += 1) {
+      var field = rows[i].getAttribute("data-ab-focus-field");
+      var sel = rows[i].querySelector("select");
+      var value = String(v[field] || "");
+      if (sel) {
+        sel.value = value;
+        var off = focusFieldDisabled(field, v, sep);
+        sel.disabled = off;
+        rows[i].setAttribute("data-ab-focus-disabled", off ? "true" : "false");
+      }
+      rows[i].setAttribute("data-ab-focus-answered", value ? "true" : "false");
+    }
+    refreshFocusDerived(arm, v);
+  }
+  function refreshFocusDerived(arm, values) {
+    var node = el(reviewFieldId(arm, "focusDerived"));
+    if (!node) return;
+    var v = values || collectFocus(arm);
+    var status = deriveFocusStatus(v, focusSeparationRequired(ui.sourceNo));
+    node.textContent = "判定（自動）: " + (FOCUS_DERIVED_LABEL[status] || status);
+    node.setAttribute("data-ab-focus-derived", status);
+  }
+  // 入力のたびに「該当なし固定」「対象が見えないときは以降を問わない」を作り直す。
+  function markFocusAnswered(arm) {
+    setFocus(arm, collectFocus(arm));
+  }
+
+  // 未回答の数。not_applicable は回答済みとして数える。
+  function missingFocusAnswers(values, sourceNo) {
+    if (!focusRubricFor(sourceNo)) return 0;
+    var sep = focusSeparationRequired(sourceNo);
+    var v = normalizeFocusValues((values && values.focus) || Object.create(null), sep);
+    if (!v.targetVisibility) return FOCUS_FIELDS.length;
+    var n = 0;
+    if (!v.targetSharpness) n += 1;
+    if (!v.depthSeparation) n += 1;
+    return n;
+  }
+  function focusAssessmentFromValues(values, sourceNo) {
+    var rubric = focusRubricFor(sourceNo);
+    if (!rubric) return null;
+    var sep = !!rubric.separationRequired;
+    var v = normalizeFocusValues((values && values.focus) || Object.create(null), sep);
+    return {
+      targetLabel: String(rubric.targetLabel),
+      separationRequired: sep,
+      targetVisibility: v.targetVisibility,
+      targetSharpness: v.targetSharpness,
+      depthSeparation: v.depthSeparation,
+      derivedFocusStatus: deriveFocusStatus(v, sep)
+    };
+  }
+  function focusMapFromAssessment(fa) {
+    var out = Object.create(null);
+    if (!fa) return out;
+    FOCUS_FIELDS.forEach(function (k) { out[k] = String(fa[k] || ""); });
+    return out;
+  }
+  function focusMapsEqual(a, b) {
+    for (var i = 0; i < FOCUS_FIELDS.length; i += 1) {
+      var k = FOCUS_FIELDS[i];
+      if (String((a || {})[k] || "") !== String((b || {})[k] || "")) return false;
+    }
+    return true;
+  }
+
   function buildReviewForm(arm) {
     var host = el("abReview" + arm);
     if (!host || !db.pkg) return;
@@ -3068,6 +3380,20 @@
         : v === "hold" ? "hold（保留）" : v === "reject" ? "reject（不採用）" : v, v));
     });
     labeled("判定", verdict);
+
+    // 合焦対象の反映。美的満足度・意図一致より前に置き、両者を混同させない。
+    // 行はケースごとに syncFocusForm が入れる。宣言の無いパッケージでは空のまま隠れる。
+    var focusHead = document.createElement("div");
+    focusHead.className = "field-label";
+    focusHead.id = reviewFieldId(arm, "focusHead");
+    focusHead.textContent = "合焦対象の反映";
+    focusHead.hidden = true;
+    host.appendChild(focusHead);
+    var focusList = document.createElement("div");
+    focusList.id = reviewFieldId(arm, "focus");
+    focusList.className = "ab-focus";
+    host.appendChild(focusList);
+    focusFormSignature[arm] = null;
 
     (policy.scoreKeys || []).forEach(function (key) {
       var s = document.createElement("select");
@@ -3116,6 +3442,9 @@
     labeled("コメント", notes);
 
     function keepDraft() {
+      // markFocusAnswered は「対象が見えない → 以降は該当なし」「前後差不要 → 該当なし」を
+      // 選択のたびに作り直す。下書きを捕まえる前に正規化しておく。
+      markFocusAnswered(arm);
       captureReviewDraft(arm);
       markPriorityAnswered(arm);
       renderFlow();
@@ -3126,6 +3455,7 @@
       if (n) n.addEventListener("change", keepDraft);
     });
     priorityList.addEventListener("change", keepDraft);
+    focusList.addEventListener("change", keepDraft);
     box.addEventListener("change", keepDraft);
     notes.addEventListener("input", keepDraft);
   }
@@ -3136,6 +3466,7 @@
     setVal(reviewFieldId(arm, "notes"), "");
     setFailures(arm, []);
     setPriority(arm, Object.create(null));
+    setFocus(arm, Object.create(null));
   }
   function collectFailures(arm) {
     var box = el(reviewFieldId(arm, "failures"));
@@ -3188,7 +3519,8 @@
       scores: scores,
       failures: (row.failures || []).slice(),
       notes: row.notes || "",
-      priority: priorityMapFromChecks(row.priorityChecks)
+      priority: priorityMapFromChecks(row.priorityChecks),
+      focus: focusMapFromAssessment(row.focusAssessment)
     };
   }
   function currentReviewValues(arm) {
@@ -3201,7 +3533,8 @@
       scores: scores,
       failures: collectFailures(arm),
       notes: val(reviewFieldId(arm, "notes")),
-      priority: collectPriority(arm)
+      priority: collectPriority(arm),
+      focus: collectFocus(arm)
     };
   }
   function reviewValuesEqual(a, b) {
@@ -3211,6 +3544,7 @@
       if (String((a.scores || {})[keys[i]] || "") !== String((b.scores || {})[keys[i]] || "")) return false;
     }
     if (!priorityMapsEqual(a.priority, b.priority)) return false;
+    if (!focusMapsEqual(a.focus, b.focus)) return false;
     return JSON.stringify((a.failures || []).slice().sort()) === JSON.stringify((b.failures || []).slice().sort());
   }
   function reviewValuesEmpty(values) {
@@ -3218,6 +3552,8 @@
     var priority = values.priority || {};
     var answered = Object.keys(priority).some(function (k) { return !!String(priority[k] || ""); });
     if (answered) return false;
+    var focus = values.focus || {};
+    if (String(focus.targetVisibility || "")) return false;
     return ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
       return !String((values.scores || {})[k] || "");
     });
@@ -3236,7 +3572,8 @@
     });
     if (!scoresOk) return false;
     if (sourceNo == null) return true;
-    return missingPriorityAnswers(values, sourceNo) === 0;
+    if (missingPriorityAnswers(values, sourceNo) !== 0) return false;
+    return missingFocusAnswers(values, sourceNo) === 0;
   }
   function captureReviewDraft(arm) {
     var imageId = ui.selected[arm];
@@ -3354,6 +3691,7 @@
     setVal(reviewFieldId(arm, "notes"), values.notes || "");
     setFailures(arm, values.failures || []);
     setPriority(arm, values.priority || Object.create(null));
+    setFocus(arm, values.focus || Object.create(null));
   }
 
   // ---------------------------------------------------------------------------
@@ -3428,7 +3766,9 @@
   function renderSide(arm) {
     var c = currentCase();
     if (!c) return;
-    if (syncPriorityForm(arm)) prefillReview(arm);
+    var rebuilt = syncPriorityForm(arm);
+    if (syncFocusForm(arm)) rebuilt = true;
+    if (rebuilt) prefillReview(arm);
     var rows = activeImagesFor(ui.sourceNo, arm);
     var max = maxImagesForArm(ui.sourceNo, arm);
 
@@ -3728,6 +4068,7 @@
     releaseAllPreviews();
     // 重要要素はケースごとに違う。入力を載せ直す前に行を作り替える。
     ARMS.forEach(syncPriorityForm);
+    ARMS.forEach(syncFocusForm);
     ARMS.forEach(clearReviewInputs);
     setVal("abPreference", "");
     setVal("abCompareNotes", "");
@@ -4008,6 +4349,9 @@
         // 優先項目を宣言したパッケージのときだけ足す後方互換の追加項目。
         var checks = priorityChecksFromValues(input, ui.sourceNo);
         if (checks.length) saved.priorityChecks = checks;
+        // 合焦ルーブリックを宣言したパッケージのときだけ足す後方互換の追加項目。
+        var fa = focusAssessmentFromValues(input, ui.sourceNo);
+        if (fa) saved.focusAssessment = fa;
         db.reviews.push(saved);
         delete db.reviewDrafts[row.imageId];
       });
@@ -4157,6 +4501,19 @@
               evaluation.missingPriorityCount = rev.priorityChecks.filter(function (pc) {
                 return pc && pc.status === "missing";
               }).length;
+            }
+            // 合焦ルーブリックを持つ記録にだけ出す後方互換の追加項目。
+            // derivedFocusStatus は保存時に計算済みの値をそのまま出す(ここで作り直さない)。
+            if (rev && rev.focusAssessment) {
+              var fa = rev.focusAssessment;
+              evaluation.focusAssessment = {
+                targetLabel: String(fa.targetLabel || ""),
+                separationRequired: !!fa.separationRequired,
+                targetVisibility: String(fa.targetVisibility || ""),
+                targetSharpness: String(fa.targetSharpness || ""),
+                depthSeparation: String(fa.depthSeparation || ""),
+                derivedFocusStatus: String(fa.derivedFocusStatus || "")
+              };
             }
             return {
               imageId: r.imageId,

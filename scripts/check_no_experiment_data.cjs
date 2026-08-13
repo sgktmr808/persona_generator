@@ -49,7 +49,14 @@ const FORBIDDEN_PHRASES = [
   "visual_priority_conflict",             // 実験ID
   "最優先に成立させる視覚要素",            // Treatment が入れる優先ブロックの見出し
   "上記の最優先要素を損なわない範囲で",    // Treatment の競合弱化に使う固定句
-  "VPC-T1"                                 // 処理定義ID
+  "VPC-T1",                                // 処理定義ID
+  // 光学対象の実行可能形化実験(OP-E1)。実験ID・処理規則・対象名・実本文の語彙は公開しない。
+  "optical_target_materialization",        // 実験ID
+  "op-e1.subject-token-face-suffix",       // 処理規則ID
+  "主体の顔",                               // Treatment の合焦対象
+  "ピントは主体",                           // 指定文(generic focus 文)の語彙
+  "gen-r4a-b1",                            // 取得した候補の generationId 接頭辞
+  "gen-bms8rbb02"                          // 既存母集団の generationId 接頭辞
 ];
 FORBIDDEN_PHRASES.forEach(function (phrase) {
   check("実験固有の語 '" + phrase + "' を公開ファイルへ置いていない", others.indexOf(phrase) < 0);

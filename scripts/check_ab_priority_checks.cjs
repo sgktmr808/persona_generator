@@ -54,13 +54,41 @@ function createServer() {
     fs.createReadStream(target).pipe(res);
   });
 }
+
+// [R4C] keep-alive 接続を掴んだままだと server.close() は永久に待つ。
+//  接続を控えておき、停止時に能動的に破棄する。
+function trackSockets(server) {
+  server.__sockets = new Set();
+  server.on("connection", (socket) => {
+    server.__sockets.add(socket);
+    socket.on("close", () => server.__sockets.delete(socket));
+  });
+  return server;
+}
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${server.address().port}`));
   });
 }
-function closeServer(server) { return new Promise((resolve) => server.close(resolve)); }
+// [R4C] 有界なサーバ停止。Chrome の keep-alive 接続を先に破棄してから close を待ち、
+//  それでも終わらない場合に備えて上限を設ける(PASS表示後に終了しない問題の直接原因)。
+function closeServer(server) {
+  return new Promise((resolve) => {
+    if (!server) { resolve(); return; }
+    const sockets = server.__sockets || new Set();
+    for (const socket of sockets) { try { socket.destroy(); } catch (_) { /* already gone */ } }
+    sockets.clear();
+    let settled = false;
+    const done = () => { if (settled) return; settled = true; resolve(); };
+    const timer = setTimeout(done, 3000);
+    if (timer.unref) timer.unref();
+    try {
+      server.close(() => { clearTimeout(timer); done(); });
+    } catch (_) { clearTimeout(timer); done(); }
+  });
+}
 function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function closeChrome(chrome) {
   return new Promise((resolve) => {
@@ -132,7 +160,14 @@ class CdpClient {
     this.ws.send(JSON.stringify(payload));
     return promise;
   }
-  close() { this.ws.close(); }
+  close() {
+    // [R4C] 保留中の待ちを解いてから閉じる。未解決の Promise が残ると Node が終了しない。
+    for (const pending of this.pending.values()) {
+      try { pending.reject(new Error("CDP client closed")); } catch (_) { /* noop */ }
+    }
+    this.pending.clear();
+    try { this.ws.close(); } catch (_) { /* noop */ }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -846,7 +881,7 @@ async function main() {
   const tampered = JSON.parse(JSON.stringify(priorityPkg));
   tampered.cases[0].arms.B.prompt += "改ざん";
 
-  const server = createServer();
+  const server = trackSockets(createServer());
   const baseUrl = await listen(server);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "r3fd-"));
   const chrome = spawn(CHROME_PATH, [
