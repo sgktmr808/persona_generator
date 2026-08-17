@@ -411,6 +411,29 @@
   .ab-guided-donetext { font-weight: 700; margin-bottom: 8px; line-height: 1.5; }
   #abGuidedCopy, #abGuidedStartReview { min-height: 44px; font-size: 16px; }
   .ab-guided-drop .ab-drop-text { line-height: 1.5; }
+  /* [R4E] Clipboard API が使えない/拒否されたときの手動コピー用の本文欄。
+     iPhone の入力ズームを避けるため 16px 以上。編集は不可、横溢れは出さない。 */
+  .ab-guided-promptwrap { margin-top: 10px; min-width: 0; }
+  .ab-guided-promptwrap > summary {
+    cursor: pointer; min-height: 44px; display: flex; align-items: center;
+    min-width: 0; overflow-wrap: anywhere; white-space: normal;
+  }
+  .ab-guided-prompt {
+    width: 100%; box-sizing: border-box; min-height: 140px;
+    font-size: 16px; line-height: 1.6;
+    overflow-wrap: anywhere; word-break: break-word;
+    overflow-x: hidden; overflow-y: auto;
+  }
+  .ab-guided-hint { margin-top: 8px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+  /* [R4E] 技術的不良にだけ開く再登録欄。美的な差し替えには使わせない。 */
+  .ab-guided-repair { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); min-width: 0; }
+  .ab-guided-repairtarget {
+    font-weight: 700; line-height: 1.5; min-width: 0;
+    overflow-wrap: anywhere; word-break: break-word; white-space: normal;
+  }
+  #abGuidedRepairReason, #abGuidedRepairNote {
+    width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px;
+  }
   .ab-missing { margin-top: 4px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
@@ -704,6 +727,13 @@
         <div class="row">
           <button id="abGuidedCopy" class="grow primary" type="button">この本文をコピー</button>
         </div>
+        <!-- [R4E] 自動コピーが使えない端末のための読み取り専用の本文欄。
+             失敗時は自動で開き、全選択して iPhone の選択メニューからコピーできるようにする。 -->
+        <details id="abGuidedPromptWrap" class="ab-guided-promptwrap">
+          <summary class="sub">自動コピーが使えないとき（本文を表示して手動でコピー）</summary>
+          <textarea id="abGuidedPrompt" class="ab-guided-prompt" readonly aria-label="この手順の本文（手動コピー用）"></textarea>
+        </details>
+        <div id="abGuidedCopyHint" class="ab-guided-hint sub" role="status" hidden></div>
         <label id="abGuidedDrop" class="ab-drop ab-guided-drop" for="abGuidedFile">
           <span class="ab-drop-text">生成された画像をここへ登録</span>
           <input id="abGuidedFile" type="file" accept="image/*" class="ab-drop-input" aria-label="生成された画像を登録" />
@@ -716,6 +746,26 @@
         <div class="ab-guided-actions">
           <button id="abGuidedRetry" class="ab-guided-secondary" type="button">生成に失敗した（技術的失敗を記録）</button>
           <button id="abGuidedInspect" class="ab-guided-secondary" type="button">生成済み画像を確認</button>
+          <button id="abGuidedRepairOpen" class="ab-guided-secondary" type="button" hidden>技術的な不良で再登録する</button>
+        </div>
+        <!-- [R4E] 技術的不良(実体が無い・ファイルが壊れている)だけを対象にした限定復旧欄。
+             対象は1枠だけ。理由コードは必須で、美的理由の差し替えには使えない。 -->
+        <div id="abGuidedRepair" class="ab-guided-repair" hidden>
+          <div id="abGuidedRepairTarget" class="ab-guided-repairtarget"></div>
+          <label class="field-label" for="abGuidedRepairReason">技術的な理由（必須）</label>
+          <select id="abGuidedRepairReason" aria-label="技術的な理由">
+            <option value="missing_blob">画像の実体がこの端末に見つからない</option>
+            <option value="corrupt_file">ファイルが壊れていて開けない</option>
+          </select>
+          <label class="field-label" for="abGuidedRepairNote">メモ（任意）</label>
+          <input id="abGuidedRepairNote" type="text" placeholder="例: 保存領域の不足で消えた" />
+          <label id="abGuidedRepairDrop" class="ab-drop ab-guided-drop" for="abGuidedRepairFile">
+            <span class="ab-drop-text">同じ枠へ画像を登録し直す</span>
+            <input id="abGuidedRepairFile" type="file" accept="image/*" class="ab-drop-input" aria-label="同じ枠へ登録し直す画像" />
+          </label>
+          <div class="row">
+            <button id="abGuidedRepairCancel" class="grow" type="button">やめる</button>
+          </div>
         </div>
         <div id="abGuidedDone" class="ab-guided-done" hidden>
           <div id="abGuidedDoneText" class="ab-guided-donetext"></div>
@@ -2158,14 +2208,24 @@
     //  従来の動作から1つも分岐しない。
     phase: null,
     // 技術的失敗の記録(使える画像が出なかった生成)。レビュー画像レコードは作らない。
-    guidedRetries: []
+    guidedRetries: [],
+    // [R4E] 技術的不良による限定復旧の記録(実体が無い・ファイルが壊れている)。
+    //  美的理由の差し替えはここへ入らない(理由コードが技術的なものに限られる)。
+    guidedRepairs: []
   };
   var ui = {
     sourceNo: null,
     previews: Object.create(null),   // imageId -> objectURL
     selected: { A: "", B: "" },      // 比較対象として選んでいる imageId
     editingCondition: false,
-    initialized: false
+    initialized: false,
+    // [R4E] imageId -> "present" | "missing"。実体の有無は記録では分からないので
+    //  読み込み直後に必ず走査する。未走査(undefined)は「無い」と同じ扱いにする
+    //  (楽観視すると、実体を失ったまま 48/48 と表示してしまう)。
+    blobStatus: Object.create(null),
+    blobScanned: false,
+    // [R4E] 復旧対象。{ sourceNo, slot, rank, imageId } の1枠だけ。
+    repair: null
   };
   var idCounter = 0;
 
@@ -2245,7 +2305,8 @@
         exportedImageIds: db.exportedImageIds,
         resamplePlan: db.resamplePlan,
         phase: db.phase,
-        guidedRetries: db.guidedRetries
+        guidedRetries: db.guidedRetries,
+        guidedRepairs: db.guidedRepairs
       }));
       return true;
     } catch (e) {
@@ -2268,6 +2329,7 @@
       // [R4D] 宣言の無いパッケージでは phase は null のまま(従来の挙動)。
       db.phase = parsed.phase === "evaluation" || parsed.phase === "generation" ? parsed.phase : null;
       db.guidedRetries = Array.isArray(parsed.guidedRetries) ? parsed.guidedRetries : [];
+      db.guidedRepairs = Array.isArray(parsed.guidedRepairs) ? parsed.guidedRepairs : [];
       // comparisonDrafts は後方互換の追加項目。持たない既存記録は空で始める。
       db.comparisonDrafts = parsed.comparisonDrafts && typeof parsed.comparisonDrafts === "object"
         ? parsed.comparisonDrafts : Object.create(null);
@@ -2322,6 +2384,18 @@
       });
     });
   }
+  // [R4E] 1件だけの実体削除。localStorage の保存に失敗したときのロールバックで使う
+  //  (実体だけ残ると、記録に無い画像が端末へ溜まっていく)。
+  function deleteImageBlob(imageId) {
+    return openImageDb().then(function (d) {
+      return new Promise(function (resolve) {
+        var tx = d.transaction([IMAGE_STORE], "readwrite");
+        tx.objectStore(IMAGE_STORE).delete(imageId);
+        tx.oncomplete = function () { d.close(); resolve(true); };
+        tx.onerror = function () { d.close(); resolve(false); };
+      });
+    }).catch(function () { return false; });
+  }
   function getImageBlob(imageId) {
     return openImageDb().then(function (d) {
       return new Promise(function (resolve, reject) {
@@ -2365,8 +2439,10 @@
     return Promise.all(rows.map(function (r) {
       if (previewUrl(r.imageId)) return Promise.resolve(false);
       return getImageBlob(r.imageId).then(function (blob) {
+        // [R4E] 実体の有無はここでも控える(記録だけ残って実体を失った枠を見逃さない)。
+        ui.blobStatus[r.imageId] = blob ? "present" : "missing";
         return blob ? setPreview(r.imageId, blob) : false;
-      }, function () { return false; });
+      }, function () { ui.blobStatus[r.imageId] = "missing"; return false; });
     })).then(function () { render(); });
   }
 
@@ -2381,6 +2457,219 @@
       policy: pkg.policy,
       exportTargets: pkg.exportTargets,
       cases: pkg.cases
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // [R4E] 案内付き実行契約(generationExecution)の検証
+  //  宣言された契約もその中の assertions も**証拠として信用しない**。
+  //  パッケージの cases から期待キューを再導出し、1項目でも食い違えば
+  //  案内付きの作業台を出さない(fail closed)。記録には一切触れない。
+  // ---------------------------------------------------------------------------
+  //  キュー形式は実験IDに依存しない接尾辞で識別する(この画面は汎用のまま保つ)。
+  var GUIDED_QUEUE_SCHEMA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.generation-execution\.v1$/;
+  //  正規化本文のキー順。normalizedQueueSha256 はこの並びの JSON に対する SHA-256。
+  var GUIDED_QUEUE_KEYS = ["sequence", "caseId", "sourceNo", "slot", "rank", "armGenerationId", "promptSha256"];
+
+  function guidedNormalizedQueueText(items) {
+    return JSON.stringify(items.map(function (i) {
+      var out = {};
+      GUIDED_QUEUE_KEYS.forEach(function (k) { out[k] = i[k]; });
+      return out;
+    }));
+  }
+
+  // 固定の生成条件。案内付きパッケージではこれを**そのまま採用**するので、
+  // 欠けた/矛盾した宣言を黙って既定値で埋めない。
+  function guidedConditionErrors(pkg) {
+    var at = "experiment.generationConditions";
+    var errors = [];
+    var gc = pkg && pkg.experiment && pkg.experiment.generationConditions;
+    if (!gc || typeof gc !== "object" || Array.isArray(gc)) {
+      return [{ field: at, reason: "案内付きパッケージには固定の生成条件が必要" }];
+    }
+    if (typeof gc.provider !== "string" || !gc.provider) {
+      errors.push({ field: at + ".provider", reason: "必須（空でない文字列）" });
+    }
+    if (typeof gc.model !== "string" || !gc.model) {
+      errors.push({ field: at + ".model", reason: "必須（空でない文字列）" });
+    }
+    if (gc.seedSupport !== "supported" && gc.seedSupport !== "unsupported") {
+      errors.push({ field: at + ".seedSupport", reason: "supported / unsupported のどちらかが必要" });
+    } else if (gc.seedSupport === "supported"
+      && (gc.imageSeed === null || gc.imageSeed === undefined || String(gc.imageSeed) === "")) {
+      errors.push({ field: at + ".imageSeed", reason: "Seed を指定できる契約なのに Seed 値が無い" });
+    }
+    return errors;
+  }
+
+  // 同期でできる検査すべて。キューSHAだけ WebCrypto が非同期なので別関数に分ける。
+  function guidedContractErrors(pkg) {
+    var at = "experiment.generationExecution";
+    var g = pkg && pkg.experiment && pkg.experiment.generationExecution;
+    var errors = [];
+    if (!g || typeof g !== "object" || Array.isArray(g)) {
+      return [{ field: at, reason: "実行キューの宣言がオブジェクトでない" }];
+    }
+    if (typeof g.schemaVersion !== "string" || !GUIDED_QUEUE_SCHEMA_RE.test(g.schemaVersion)) {
+      errors.push({ field: at + ".schemaVersion", reason: "対応していないキュー形式: " + String(g.schemaVersion) });
+    }
+    var items = g.items;
+    if (!Array.isArray(items) || !items.length) {
+      errors.push({ field: at + ".items", reason: "実行キューが空" });
+      return errors;
+    }
+    if (g.itemCount !== items.length) {
+      errors.push({ field: at + ".itemCount",
+        reason: "宣言 " + String(g.itemCount) + " が実際の件数 " + items.length + " と一致しない" });
+    }
+    var cases = Array.isArray(pkg.cases) ? pkg.cases : [];
+    var need = pkg.policy && pkg.policy.requiredImagesPerArm;
+    if (typeof need !== "number" || !isFinite(need) || need <= 0 || Math.floor(need) !== need) {
+      errors.push({ field: "policy.requiredImagesPerArm",
+        reason: "案内付きパッケージには1以上の整数が必要（今は " + JSON.stringify(need) + "）" });
+      return errors;
+    }
+    var expectedCount = cases.length * ARMS.length * need;
+    if (items.length !== expectedCount) {
+      errors.push({ field: at + ".items",
+        reason: "件数 " + items.length + " が ケース " + cases.length + " × 2面 × " + need + "枚 = "
+          + expectedCount + " と一致しない" });
+    }
+
+    // 期待キューを**パッケージのケースから再導出**する。宣言側の並びは参照しない。
+    //   1. パッケージのケース順に辿る
+    //   2. 各ケースの凍結 generationOrder の順に役割を辿る
+    //   3. 凍結 slotRoles で役割を中立な A / B へ写す
+    //   4. 先の面から rank 1, 2, ... を作る
+    var expected = [];
+    var derivable = true;
+    var seq = 0;
+    cases.forEach(function (c, ci) {
+      var where = "cases[" + ci + "]";
+      var roles = c && c.slotRoles;
+      var order = c && c.generationOrder;
+      if (!roles || typeof roles.A !== "string" || typeof roles.B !== "string" || roles.A === roles.B) {
+        errors.push({ field: where + ".slotRoles", reason: "A/B に割り当てた役割を読めない" });
+        derivable = false; return;
+      }
+      if (!Array.isArray(order) || order.length !== ARMS.length) {
+        errors.push({ field: where + ".generationOrder", reason: "生成順が2件でない" });
+        derivable = false; return;
+      }
+      var slotForRole = Object.create(null);
+      slotForRole[roles.A] = "A";
+      slotForRole[roles.B] = "B";
+      var slots = order.map(function (role) { return slotForRole[role]; });
+      if (slots[0] === slots[1] || (slots[0] !== "A" && slots[0] !== "B") || (slots[1] !== "A" && slots[1] !== "B")) {
+        errors.push({ field: where + ".generationOrder", reason: "生成順を2つの異なる面へ写せない" });
+        derivable = false; return;
+      }
+      if (!c.arms || !c.arms.A || !c.arms.B) { derivable = false; return; }
+      slots.forEach(function (slot) {
+        for (var rank = 1; rank <= need; rank += 1) {
+          seq += 1;
+          expected.push({
+            sequence: seq, caseId: c.caseId, sourceNo: c.sourceNo, slot: slot, rank: rank,
+            armGenerationId: c.arms[slot].generationId, promptSha256: c.arms[slot].promptSha256
+          });
+        }
+      });
+    });
+
+    // 宣言側の自己整合(通し番号・(sourceNo, slot, rank) の一意性)。再導出とは独立に見る。
+    var seenSeq = Object.create(null);
+    var seenKey = Object.create(null);
+    var byNo = Object.create(null);
+    cases.forEach(function (c) { if (c && typeof c.sourceNo === "number") byNo["p" + c.sourceNo] = c; });
+    items.forEach(function (it, i) {
+      var where = at + ".items[" + i + "]";
+      if (!it || typeof it !== "object" || Array.isArray(it)) {
+        errors.push({ field: where, reason: "キュー項目がオブジェクトでない" });
+        return;
+      }
+      if (typeof it.sequence !== "number" || Math.floor(it.sequence) !== it.sequence
+        || it.sequence < 1 || it.sequence > items.length) {
+        errors.push({ field: where + ".sequence", reason: "1〜" + items.length + " の整数でない: " + String(it.sequence) });
+      } else if (seenSeq[it.sequence]) {
+        errors.push({ field: where + ".sequence", reason: "通し番号が重複している: " + it.sequence });
+      } else { seenSeq[it.sequence] = true; }
+      var c = byNo["p" + it.sourceNo];
+      if (!c) {
+        errors.push({ field: where + ".sourceNo", reason: "パッケージに無いケース: " + String(it.sourceNo) });
+        return;
+      }
+      if (it.caseId !== c.caseId) {
+        errors.push({ field: where + ".caseId", reason: "sourceNo " + it.sourceNo + " のケースIDと一致しない" });
+      }
+      if (it.slot !== "A" && it.slot !== "B") {
+        errors.push({ field: where + ".slot", reason: "A / B でない: " + String(it.slot) });
+        return;
+      }
+      if (typeof it.rank !== "number" || Math.floor(it.rank) !== it.rank || it.rank < 1 || it.rank > need) {
+        errors.push({ field: where + ".rank", reason: "1〜" + need + " の整数でない: " + String(it.rank) });
+        return;
+      }
+      var key = it.sourceNo + "/" + it.slot + "/" + it.rank;
+      if (seenKey[key]) {
+        errors.push({ field: where + ".rank", reason: "同じ ケース/面/順位 が2回現れている: " + key });
+      } else { seenKey[key] = true; }
+      if (c.arms && c.arms[it.slot]) {
+        if (it.armGenerationId !== c.arms[it.slot].generationId) {
+          errors.push({ field: where + ".armGenerationId", reason: "パッケージの該当面の生成IDと一致しない" });
+        }
+        if (it.promptSha256 !== c.arms[it.slot].promptSha256) {
+          errors.push({ field: where + ".promptSha256", reason: "パッケージの該当面の本文ハッシュと一致しない" });
+        }
+      }
+    });
+    if (derivable && expected.length === items.length) {
+      for (var k = 0; k < expected.length; k += 1) {
+        var got = items[k] || {};
+        var want = expected[k];
+        var mismatch = GUIDED_QUEUE_KEYS.filter(function (f) { return got[f] !== want[f]; });
+        if (mismatch.length) {
+          errors.push({ field: at + ".items[" + k + "]",
+            reason: "凍結 generationOrder と slotRoles から導いた並びと一致しない（" + mismatch.join(", ") + "）" });
+          break;   // 並びが崩れた時点で以降は意味を持たない
+        }
+      }
+    }
+    // 評価順は1〜ケース数の整数がちょうど1回ずつ。
+    var seenEval = Object.create(null);
+    var evalOk = true;
+    cases.forEach(function (c, ci) {
+      var v = c && c.evaluationOrder;
+      if (typeof v !== "number" || Math.floor(v) !== v || v < 1 || v > cases.length) {
+        errors.push({ field: "cases[" + ci + "].evaluationOrder",
+          reason: "1〜" + cases.length + " の整数でない: " + String(v) });
+        evalOk = false; return;
+      }
+      if (seenEval[v]) {
+        errors.push({ field: "cases[" + ci + "].evaluationOrder", reason: "評価順が重複している: " + v });
+        evalOk = false; return;
+      }
+      seenEval[v] = true;
+    });
+    if (evalOk && Object.keys(seenEval).length !== cases.length) {
+      errors.push({ field: "cases[].evaluationOrder", reason: "1〜" + cases.length + " を覆っていない" });
+    }
+    guidedConditionErrors(pkg).forEach(function (e) { errors.push(e); });
+    return errors;
+  }
+
+  // キューSHA-256の再計算(非同期)。宣言値をそのまま信じない。
+  function guidedQueueShaError(pkg) {
+    var g = pkg && pkg.experiment && pkg.experiment.generationExecution;
+    var at = "experiment.generationExecution.normalizedQueueSha256";
+    if (!g || !Array.isArray(g.items) || !g.items.length) return Promise.resolve(null);
+    if (typeof g.normalizedQueueSha256 !== "string" || !/^[0-9a-f]{64}$/.test(g.normalizedQueueSha256)) {
+      return Promise.resolve({ field: at, reason: "SHA-256 の形式でない" });
+    }
+    return sha256Text(guidedNormalizedQueueText(g.items)).then(function (hex) {
+      if (hex === null) return null;   // 計算できない環境は integrity 側の案内に任せる
+      return hex === g.normalizedQueueSha256 ? null
+        : { field: at, reason: "実行キューを正規化した SHA-256 と一致しない" };
     });
   }
 
@@ -2533,6 +2822,14 @@
           }
         });
       });
+    }
+
+    // [R4E] 案内付き実行契約を宣言したパッケージは、契約そのものも独立に検証する。
+    //  ここで落ちたものは作業台へ載せない(記録は1件も触らない)。
+    if (pkg.experiment && pkg.experiment.generationExecution !== undefined
+      && pkg.experiment.generationExecution !== null) {
+      guidedContractErrors(pkg).forEach(function (e) { errors.push(e); });
+      checks.push(guidedQueueShaError(pkg));
     }
 
     return Promise.all(checks).then(function (results) {
@@ -3447,44 +3744,127 @@
   //  宣言の無い既存パッケージでは guidedEnabled() が false になり、
   //  ここから下の分岐はすべて素通りする(従来の挙動を1つも変えない)。
   // ---------------------------------------------------------------------------
+  //  [R4E] 契約は使うたびに**再検証**する。宣言された assertions は証拠にしない。
+  //   検証に落ちたパッケージでは guidedContract() が null を返し、案内付きの作業台も
+  //   評価順の強制も出さない(記録には触れない)。
+  var guidedCheckCache = { pkg: null, ok: false, errors: [] };
+  function guidedCheck() {
+    var pkg = db.pkg;
+    if (!pkg || !pkg.experiment || pkg.experiment.generationExecution === undefined
+      || pkg.experiment.generationExecution === null) {
+      return { declared: false, ok: false, errors: [] };
+    }
+    if (guidedCheckCache.pkg !== pkg) {
+      var errs = guidedContractErrors(pkg);
+      guidedCheckCache = { pkg: pkg, ok: errs.length === 0, errors: errs };
+    }
+    return { declared: true, ok: guidedCheckCache.ok, errors: guidedCheckCache.errors };
+  }
   function guidedContract() {
-    var g = db.pkg && db.pkg.experiment && db.pkg.experiment.generationExecution;
-    return (g && Array.isArray(g.items) && g.items.length) ? g : null;
+    var v = guidedCheck();
+    return (v.declared && v.ok) ? db.pkg.experiment.generationExecution : null;
+  }
+  // 契約を宣言しているのに検証を通らないパッケージ。案内付きの作業台は開かない。
+  function guidedBroken() { var v = guidedCheck(); return v.declared && !v.ok; }
+  function guidedBrokenText() {
+    var v = guidedCheck();
+    return "このパッケージの生成手順は使えません: " + errorsText(v.errors);
   }
   function guidedEnabled() { return !!guidedContract(); }
   function guidedQueue() { var g = guidedContract(); return g ? g.items : []; }
 
+  // [R4E] パッケージが凍結した生成条件。案内付きパッケージではこれを**そのまま採用**する。
+  function guidedFrozenCondition() {
+    if (!guidedEnabled()) return null;
+    var gc = db.pkg.experiment.generationConditions;
+    return {
+      provider: gc.provider, model: gc.model, seedSupport: gc.seedSupport,
+      imageSeed: gc.seedSupport === "supported" ? gc.imageSeed : null
+    };
+  }
+  function sameCondition(a, b) {
+    if (!a || !b) return false;
+    return a.provider === b.provider && a.model === b.model && a.seedSupport === b.seedSupport
+      && (a.imageSeed === null || a.imageSeed === undefined ? null : a.imageSeed)
+        === (b.imageSeed === null || b.imageSeed === undefined ? null : b.imageSeed);
+  }
+  // 利用者に provider / model / Seed を選ばせない・入れさせない・確認させない。
+  // 読み込み直後にこの端末の既定として採用し、作業台へ直行する。
+  function guidedAdoptCondition() {
+    var frozen = guidedFrozenCondition();
+    if (!frozen) return false;
+    if (sameCondition(db.defaultCondition, frozen)) return false;
+    db.defaultCondition = frozen;
+    ui.editingCondition = false;
+    persist();
+    return true;
+  }
+
+  // 実体の有無は記録から分からないので、読み込み直後に必ず走査する。
+  // 未走査(undefined)は「無い」と同じ扱い。楽観視すると実体を失ったまま完了表示になる。
+  function guidedBlobPresent(imageId) { return ui.blobStatus[imageId] === "present"; }
+  function guidedScanBlobs() {
+    if (!guidedEnabled()) { ui.blobScanned = true; return Promise.resolve(); }
+    var rows = (db.images || []).filter(function (r) { return r && !isDead(r.imageId); });
+    return Promise.all(rows.map(function (r) {
+      if (ui.blobStatus[r.imageId]) return null;
+      return getImageBlob(r.imageId).then(function (b) {
+        ui.blobStatus[r.imageId] = b ? "present" : "missing";
+      }, function () { ui.blobStatus[r.imageId] = "missing"; });
+    })).then(function () { ui.blobScanned = true; render(); });
+  }
+
   // 進捗は保存済み画像から毎回導く。可変カウンタに頼らない
   // (再読み込み・別端末からの取り込み・記録の取り消しでも同じ答えになる)。
   function guidedKey(sourceNo, slot, rank) { return sourceNo + "/" + slot + "/" + rank; }
-  function guidedDoneMap() {
-    var map = Object.create(null);
-    if (!guidedEnabled()) return map;
+
+  // [R4E] 「N / N 登録完了」は緩い推定でなく**厳密な検査結果**にする。
+  //  1枠1枚ちょうど・手順外の画像なし・SHA-256が全件そろって一意・登録先が手順と一致・
+  //  実体が読める・生成条件が固定値と一致・条件記録が一意、のすべてを満たしたときだけ有効。
+  function guidedAudit() {
+    var q = guidedQueue();
+    var out = { total: q.length, valid: 0, entries: [], extra: [], firstBadIndex: -1, complete: false };
+    if (!guidedEnabled()) return out;
     var invalid = Object.create(null);
     (db.invalidations || []).forEach(function (v) { if (v && v.imageId) invalid[v.imageId] = true; });
-    (db.images || []).forEach(function (r) {
-      if (invalid[r.imageId]) return;
-      map[guidedKey(r.sourceNo, r.arm, r.rank)] = r;
+    var active = (db.images || []).filter(function (r) { return r && !invalid[r.imageId]; });
+    var queueKeys = Object.create(null);
+    q.forEach(function (it) { queueKeys[guidedKey(it.sourceNo, it.slot, it.rank)] = true; });
+    var byKey = Object.create(null);
+    var shaCount = Object.create(null);
+    active.forEach(function (r) {
+      var key = guidedKey(r.sourceNo, r.arm, r.rank);
+      if (queueKeys[key]) { (byKey[key] || (byKey[key] = [])).push(r); }
+      else { out.extra.push(r); }
+      var s = r.metadata && r.metadata.sha256;
+      if (s) shaCount[s] = (shaCount[s] || 0) + 1;
     });
-    return map;
+    q.forEach(function (it, i) {
+      var rows = byKey[guidedKey(it.sourceNo, it.slot, it.rank)] || [];
+      var row = rows.length === 1 ? rows[0] : null;
+      var s = row && row.metadata ? row.metadata.sha256 : "";
+      var tip = activeConditionFor(it.sourceNo);
+      var why = "";
+      if (!rows.length) why = "未登録";
+      else if (rows.length > 1) why = "同じ枠に画像が " + rows.length + " 件ある";
+      else if (!s) why = "画像のハッシュが記録されていない";
+      else if (shaCount[s] > 1) why = "同じ画像が実験内で重複している";
+      else if (!guidedBlobPresent(row.imageId)) why = "画像の実体がこの端末に見つからない";
+      else if (row.caseKey !== caseKeyOf(it.sourceNo) || row.arm !== it.slot || row.rank !== it.rank
+        || row.armGenerationId !== it.armGenerationId || row.guidedSequence !== it.sequence) {
+        why = "記録の登録先が手順と一致しない";
+      } else if (tip.ambiguous) why = "生成条件の記録が一意に定まらない";
+      else if (!sameCondition(tip.active, guidedFrozenCondition())) why = "生成条件が固定値と一致しない";
+      if (!why) out.valid += 1;
+      else if (out.firstBadIndex < 0) out.firstBadIndex = i;
+      out.entries.push({ index: i, item: it, ok: !why, why: why, row: row });
+    });
+    out.complete = q.length > 0 && out.valid === q.length && out.extra.length === 0;
+    return out;
   }
-  function guidedNextIndex() {
-    if (!guidedEnabled()) return -1;
-    var done = guidedDoneMap();
-    var q = guidedQueue();
-    for (var i = 0; i < q.length; i += 1) {
-      if (!done[guidedKey(q[i].sourceNo, q[i].slot, q[i].rank)]) return i;
-    }
-    return -1;
-  }
-  function guidedRegisteredCount() {
-    if (!guidedEnabled()) return 0;
-    var done = guidedDoneMap();
-    return guidedQueue().filter(function (it) {
-      return !!done[guidedKey(it.sourceNo, it.slot, it.rank)];
-    }).length;
-  }
-  function guidedComplete() { return guidedEnabled() && guidedNextIndex() === -1; }
+  function guidedNextIndex() { return guidedEnabled() ? guidedAudit().firstBadIndex : -1; }
+  function guidedRegisteredCount() { return guidedEnabled() ? guidedAudit().valid : 0; }
+  function guidedComplete() { return guidedEnabled() && guidedAudit().complete; }
   function guidedPhase() {
     if (!guidedEnabled()) return null;
     if (db.phase === "evaluation") return "evaluation";
@@ -3506,21 +3886,91 @@
     return [gc.model || gc.provider || "", seed].filter(Boolean).join(" / ");
   }
   // 同一実験の中で、生きている画像のSHA-256が重複していないか
-  function guidedDuplicateOf(sha) {
+  // (技術的な再登録では、置き換える当人だけ除いて見る)。
+  function guidedDuplicateOf(sha, exceptImageId) {
     var invalid = Object.create(null);
     (db.invalidations || []).forEach(function (v) { if (v && v.imageId) invalid[v.imageId] = true; });
     var hit = null;
     (db.images || []).forEach(function (r) {
       if (invalid[r.imageId]) return;
+      if (exceptImageId && r.imageId === exceptImageId) return;
       if (r.metadata && r.metadata.sha256 === sha) hit = r;
     });
     return hit;
   }
 
-  function guidedRegister(fileList) {
-    var files = Array.prototype.slice.call(fileList || []);
-    var input = el("abGuidedFile");
+  // [R4E] 記録・生成条件・(復旧なら)無効化と復旧イベントを**一括で**確定する。
+  //  localStorage が失敗したら、すべて元へ戻し、直前に書いた実体も消す。
+  //  ここを通り抜けたときだけ「保存できた」と言ってよい。
+  function guidedCommit(row, item, repair) {
+    var before = {
+      images: db.images.slice(),
+      conditions: db.conditions.slice(),
+      invalidations: db.invalidations.slice(),
+      repairs: db.guidedRepairs.slice()
+    };
+    var frozen = guidedFrozenCondition();
+    var tip = activeConditionFor(item.sourceNo);
+    var cond = tip.active;
+    if (!cond) {
+      cond = {
+        conditionId: makeId("abcond"),
+        experimentId: db.pkg.experiment.experimentId,
+        caseKey: caseKeyOf(item.sourceNo),
+        sourceNo: item.sourceNo,
+        provider: frozen.provider,
+        model: frozen.model,
+        seedSupport: frozen.seedSupport,
+        imageSeed: frozen.imageSeed,
+        supersedes: null,
+        ts: nowIso()
+      };
+      db.conditions.push(cond);
+    }
+    row.conditionId = cond.conditionId;
+    if (repair) {
+      db.invalidations.push({
+        invalidationId: makeId("abinv"),
+        imageId: repair.imageId,
+        caseKey: row.caseKey,
+        arm: row.arm,
+        reason: "技術的不良（" + repair.reasonCode + "）",
+        ts: nowIso()
+      });
+      db.guidedRepairs.push({
+        sequence: item.sequence, caseId: item.caseId, sourceNo: item.sourceNo,
+        slot: item.slot, rank: item.rank,
+        replacedImageId: repair.imageId, newImageId: row.imageId,
+        reasonCode: repair.reasonCode, note: String(repair.note || ""),
+        ts: nowIso()
+      });
+    }
+    db.images.push(row);
+    if (persist()) {
+      ui.blobStatus[row.imageId] = "present";
+      return Promise.resolve({ row: row });
+    }
+    db.images = before.images;
+    db.conditions = before.conditions;
+    db.invalidations = before.invalidations;
+    db.guidedRepairs = before.repairs;
+    persist();   // 元の内容を書き戻す(失敗しても保存済みの内容は増えていない)
+    return deleteImageBlob(row.imageId).then(function () {
+      delete ui.blobStatus[row.imageId];
+      return { failed: "storage" };
+    });
+  }
+
+  //  [R4E] 成功の手順を明示する:
+  //   1枚だけ検証 → SHA-256 → 実験内の重複拒否 → 行を組む(まだ状態へ入れない)
+  //   → 実体を保存 → 記録と生成条件を入れて localStorage を保存 → 成功表示 → 前進。
+  //  どちらの保存が失敗しても同じ手順に留まり、記録にも実体にも痕跡を残さない。
+  function guidedRegister(fileList, opts) {
+    opts = opts || {};
+    var repair = opts.repair || null;
+    var input = el(opts.inputId || "abGuidedFile");
     function clearInput() { if (input) input.value = ""; }
+    var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return Promise.resolve();
     // 案内付き投入口は1枚だけ受け付ける。複数選択は誤登録の温床なので取り込まない。
     if (files.length > 1) {
@@ -3528,21 +3978,36 @@
       guidedMsg("この投入口は1枚だけ受け付けます。1枚ずつ登録してください。", true);
       return Promise.resolve();
     }
-    var idx = guidedNextIndex();
-    if (idx < 0) { clearInput(); guidedMsg("48枚すべて登録済みです。", false); render(); return Promise.resolve(); }
-    var item = guidedQueue()[idx];
-    var cond = ensureConditionRow(item.sourceNo);
-    if (!cond) { clearInput(); guidedMsg("生成元を登録できませんでした。", true); return Promise.resolve(); }
-    var file = files[0];
-    return sha256File(file).then(function (sha) {
-      if (!sha) { guidedMsg("この画像のハッシュを計算できませんでした（httpsでお試しください）。", true); clearInput(); return null; }
-      var dup = guidedDuplicateOf(sha);
-      if (dup) {
-        guidedMsg("同じ画像が既に " + dup.sourceNo + " / " + dup.arm + " / " + dup.rank + "枚目 に登録されています。別の画像を登録してください。", true);
+    var item = opts.item || null;
+    if (!item) {
+      var idx = guidedNextIndex();
+      if (idx < 0) {
         clearInput();
+        guidedMsg("すべての手順が登録済みです。", false);
+        render();
+        return Promise.resolve();
+      }
+      item = guidedQueue()[idx];
+    }
+    var file = files[0];
+    var c = guidedCaseFor(item.sourceNo);
+    var frozen = guidedFrozenCondition();
+    if (!c || !frozen) {
+      clearInput();
+      guidedMsg("この手順の対象を特定できませんでした。", true);
+      return Promise.resolve();
+    }
+    return sha256File(file).then(function (sha) {
+      if (!sha) {
+        guidedMsg("この画像のハッシュを計算できませんでした（httpsでお試しください）。", true);
         return null;
       }
-      var c = guidedCaseFor(item.sourceNo);
+      var dup = guidedDuplicateOf(sha, repair ? repair.imageId : null);
+      if (dup) {
+        guidedMsg("同じ画像が既に " + dup.sourceNo + " / " + dup.arm + " / " + dup.rank
+          + "枚目 に登録されています。別の画像を登録してください。", true);
+        return null;
+      }
       var row = {
         imageId: c.arms[item.slot].generationId + "-img-" + makeId("x"),
         experimentId: db.pkg.experiment.experimentId,
@@ -3552,7 +4017,7 @@
         armRole: c.arms[item.slot].role || (item.slot === "A" ? "control" : "treatment"),
         armGenerationId: c.arms[item.slot].generationId,
         baselineGenerationId: c.baselineGenerationId,
-        conditionId: cond.conditionId,
+        conditionId: null,
         rank: item.rank,
         guidedSequence: item.sequence,
         metadata: {
@@ -3564,20 +4029,64 @@
         },
         ts: nowIso()
       };
-      db.images.push(row);
-      persist();
-      setPreview(row.imageId, file);
-      return putImageBlob(row.imageId, file).then(function () { return row; }, function () { return row; });
+      // 実体を先に保存する。ここが失敗したら記録は1バイトも増やさない。
+      return putImageBlob(row.imageId, file).then(function () {
+        return guidedCommit(row, item, repair);
+      }, function () {
+        guidedMsg("画像を端末へ保存できなかったため、同じ手順のままです。もう一度登録してください。", true);
+        return null;
+      });
     }, function () {
       guidedMsg("この画像を読み取れませんでした。", true);
-      clearInput();
       return null;
-    }).then(function (row) {
+    }).then(function (res) {
       clearInput();
-      if (!row) { render(); return; }
-      guidedMsg("登録しました: " + row.caseKey + "・" + row.arm + "・" + row.rank + "枚目", false);
+      if (!res) { render(); return; }
+      if (res.failed === "storage") {
+        guidedMsg("端末の保存領域へ記録できなかったため、この手順は登録されていません"
+          + "（画像の実体も元に戻しました）。空き容量を確認してからもう一度登録してください。", true);
+        render();
+        return;
+      }
+      var row = res.row;
+      setPreview(row.imageId, file);
       guidedLastThumb = { imageId: row.imageId, note: row.metadata.name };
+      if (repair) ui.repair = null;
+      guidedMsg((repair ? "技術的不良として同じ枠へ登録し直しました: " : "登録しました: ")
+        + row.caseKey + "・" + row.arm + "・" + row.rank + "枚目", false);
       render();
+    });
+  }
+
+  // [R4E] 技術的不良にだけ開く限定復旧。対象は1枠だけで、美的な差し替えには使えない。
+  var GUIDED_REPAIR_REASONS = ["missing_blob", "corrupt_file"];
+  function guidedRepairTargetEntry() {
+    if (!ui.repair) return null;
+    var q = guidedQueue();
+    for (var i = 0; i < q.length; i += 1) {
+      if (q[i].sourceNo === ui.repair.sourceNo && q[i].slot === ui.repair.slot
+        && q[i].rank === ui.repair.rank) return q[i];
+    }
+    return null;
+  }
+  function guidedOpenRepair(sourceNo, slot, rank, imageId) {
+    ui.repair = { sourceNo: sourceNo, slot: slot, rank: rank, imageId: imageId || "" };
+    var f = el("abGuidedRepairFile");
+    if (f) f.value = "";
+    render();
+  }
+  function guidedSubmitRepair(fileList) {
+    var item = guidedRepairTargetEntry();
+    if (!item) { guidedMsg("再登録の対象がありません。", true); return Promise.resolve(); }
+    var reason = val("abGuidedRepairReason");
+    if (GUIDED_REPAIR_REASONS.indexOf(reason) < 0) {
+      guidedMsg("技術的な理由を選んでください。", true);
+      return Promise.resolve();
+    }
+    return guidedRegister(fileList, {
+      inputId: "abGuidedRepairFile",
+      item: item,
+      repair: { imageId: ui.repair.imageId, reasonCode: reason, note: val("abGuidedRepairNote") }
     });
   }
 
@@ -4262,7 +4771,25 @@
         + (incomplete.length > 8 ? " ほか" + (incomplete.length - 8) + "件" : "") : "　すべて完了"));
   }
 
-  // [R4D] 案内付き生成カードの描画。宣言の無いパッケージではカードごと隠す。
+  // [R4E] 手動コピー用の本文欄は、常に「今の手順の本文」ちょうどを持つ。
+  //  手順が変わったら中身も同時に変わり、案内も畳み直す。編集は不可。
+  var guidedPromptShown = "";
+  function guidedSyncPromptField(item) {
+    var box = el("abGuidedPrompt");
+    var wrap = el("abGuidedPromptWrap");
+    var text = item ? guidedPromptFor(item) : "";
+    var keyNow = item ? (item.sequence + ":" + item.caseId + ":" + item.slot + ":" + item.rank) : "";
+    if (box) { box.value = text; box.readOnly = true; }
+    if (keyNow !== guidedPromptShown) {
+      guidedPromptShown = keyNow;
+      if (wrap) wrap.open = false;
+      var hint = el("abGuidedCopyHint");
+      if (hint) { hint.textContent = ""; hint.hidden = true; }
+    }
+    if (wrap) wrap.hidden = !item;
+  }
+
+  // [R4D/R4E] 案内付き生成カードの描画。宣言の無いパッケージではカードごと隠す。
   function renderGuided() {
     var card = el("abGuided");
     if (!card) return;
@@ -4270,11 +4797,20 @@
     card.hidden = false;
     var q = guidedQueue();
     var total = q.length;
-    var doneCount = guidedRegisteredCount();
+    var audit = guidedAudit();
     var phase = guidedPhase();
-    var complete = guidedComplete();
+    var complete = audit.complete;
     card.setAttribute("data-phase", phase === "evaluation" ? "evaluation" : (complete ? "done" : "generation"));
     setText("abGuidedPhase", phase === "evaluation" ? "評価中" : (complete ? "生成完了" : "生成中"));
+
+    var repairItem = guidedRepairTargetEntry();
+    var repairOpen = !!repairItem;
+    show("abGuidedRepair", repairOpen);
+    if (repairOpen) {
+      setText("abGuidedRepairTarget",
+        "技術的な再登録: ケース " + repairItem.caseId + "・" + repairItem.slot + "・" + repairItem.rank
+        + "枚目　この枠だけを開いています。他の画像は変更できません。");
+    }
 
     if (phase === "evaluation") {
       var list = evaluationOrderedCases();
@@ -4282,40 +4818,74 @@
       setText("abGuidedProgress", "評価順 " + (pos < 0 ? 1 : pos + 1) + " / " + list.length);
       var cur = caseBySourceNo(ui.sourceNo);
       setText("abGuidedTarget", cur ? ("ケース " + (cur.caseId || ("No." + cur.sourceNo))) : "");
-      setText("abGuidedCond", "評価は事前登録された順番で進みます。前後の移動もこの順番です。");
+      // 導出した状態は abGuidedCond に書く。abGuidedMsg は操作の結果だけを保つ
+      //  (ここで書くと、直前の操作の成功表示を描画のたびに消してしまう)。
+      var broken = audit.entries.filter(function (e) { return !e.ok; });
+      setText("abGuidedCond", broken.length
+        ? ("評価は事前登録された順番で進みます。画像の入れ替え・追加・削除はできません。"
+          + "技術的に読めない画像が " + broken.length + " 件あります: ケース " + broken[0].item.caseId
+          + "・" + broken[0].item.slot + "・" + broken[0].item.rank + "枚目（" + broken[0].why
+          + "）。「技術的な不良で再登録する」から直してください。")
+        : "評価は事前登録された順番で進みます。画像の入れ替え・追加・削除はできません。");
       show("abGuidedCopy", false);
-      show("abGuidedDrop", false);
+      show("abGuidedPromptWrap", false);
       show("abGuidedThumbWrap", false);
       show("abGuidedRetry", false);
       show("abGuidedInspect", false);
       show("abGuidedDone", false);
-      guidedMsg("", false);
+      show("abGuidedDrop", false);
+      show("abGuidedRepairOpen", !repairOpen);
+      guidedSyncPromptField(null);
       return;
     }
 
-    setText("abGuidedProgress", doneCount + " / " + total + " 枚 登録済み");
+    // 手順外の画像があるときは、進捗行だけを見て「揃った」と読めないようにする。
+    setText("abGuidedProgress", audit.valid + " / " + total + " 枚 登録済み"
+      + (audit.extra.length ? "・手順外 " + audit.extra.length + " 件" : ""));
     show("abGuidedRetry", !complete);
     show("abGuidedInspect", true);
     show("abGuidedCopy", !complete);
-    show("abGuidedDrop", !complete);
+    show("abGuidedDrop", !complete && !repairOpen);
+    show("abGuidedRepairOpen", false);
 
     if (complete) {
       setText("abGuidedTarget", total + " / " + total + " 生成画像登録完了");
-      setText("abGuidedCond", "登録先の重複・欠落はありません。次は評価に進みます。");
+      setText("abGuidedCond",
+        "全 " + total + " 枠に画像が1枚ずつ・ハッシュは全件一意・実体も読める・生成条件も固定値どおりです。次は評価に進みます。");
       show("abGuidedThumbWrap", false);
       show("abGuidedDone", true);
+      guidedSyncPromptField(null);
       setText("abGuidedDoneText",
         total + " 枚すべてが正しいケース・A/B・順位へ登録されました。評価を始めると、事前登録された評価順で案内します。");
       return;
     }
 
     show("abGuidedDone", false);
-    var idx = guidedNextIndex();
+    var idx = audit.firstBadIndex;
+    if (idx < 0) {
+      // 欠けは無いのに完了でない = 手順に無い画像が混ざっている。数字で取り繕わない。
+      setText("abGuidedTarget", "登録内容を確認してください");
+      setText("abGuidedCond", "手順に無い画像が " + audit.extra.length + " 件あります。取り除くまで先へ進めません。");
+      show("abGuidedCopy", false);
+      show("abGuidedDrop", false);
+      guidedSyncPromptField(null);
+      return;
+    }
     var item = q[idx];
+    var entry = audit.entries[idx];
     setText("abGuidedTarget",
       "画像生成 " + item.sequence + " / " + total + "　ケース " + item.caseId + "・" + item.slot + "・" + item.rank + "枚目");
     var cond = guidedConditionText();
-    setText("abGuidedCond", cond ? ("生成条件: " + cond + "（固定）") : "");
+    var note = entry && entry.why && entry.why !== "未登録"
+      ? ("　この枠は「" + entry.why + "」ため、登録し直しが必要です。") : "";
+    setText("abGuidedCond", (cond ? ("生成条件: " + cond + "（固定・自動適用）") : "") + note);
+    guidedSyncPromptField(item);
+
+    // 実体を失った枠は、通常の投入口ではなく技術的な再登録へ誘導する。
+    if (entry && entry.row && !repairOpen) {
+      show("abGuidedDrop", false);
+      show("abGuidedRepairOpen", true);
+    }
 
     // 直前に登録した画像のサムネイル
     var wrap = el("abGuidedThumbWrap");
@@ -4330,16 +4900,21 @@
     }
   }
 
-  // 生成フェーズの間は、キューを迂回できる導線を止める。
+  // [R4E] 案内付きパッケージでは、通常の画像操作を**最初から最後まで**閉じる。
+  //  生成中はキューを迂回できるから。評価中は判断の途中で画像集合が変わるから
+  //  (足す・外す・順位を変える・気に入らないから差し替える、をすべて禁じる)。
+  //  技術的不良の復旧だけは、理由コード付きの限定経路として別に開く。
   function applyGuidedGating() {
     if (!guidedEnabled()) return;
     var generating = guidedGenerationActive();
-    // 通常のA/B投入口(複数選択可)は、案内付きキューを飛ばせてしまうので生成中は塞ぐ。
     ARMS.forEach(function (arm) {
       var drop = el("abDrop" + arm);
       var input = el("abFile" + arm);
-      if (drop) drop.hidden = generating;
-      if (input) input.disabled = generating;
+      if (drop) drop.hidden = true;
+      if (input) input.disabled = true;
+      // 画像を外す導線も閉じる(順位の付け替えも起きない)。
+      var remove = el("abRemove" + arm);
+      if (remove) { remove.hidden = true; remove.disabled = true; }
     });
     // 生成と視覚判断を分ける。生成中は評価入力・比較・保存を出さない。
     ["abReviewA", "abReviewB"].forEach(function (id) { show(id, !generating); });
@@ -4349,6 +4924,9 @@
     });
     var verdictCard = el("abVerdictCard");
     if (verdictCard) verdictCard.hidden = generating;
+    // 固定された生成条件は利用者が変えられない。
+    var edit = el("abEditCondition");
+    if (edit) { edit.hidden = true; edit.disabled = true; }
   }
 
   function render() {
@@ -4358,7 +4936,18 @@
       show("abWorkbench", false);
       return;
     }
-    var needsSetup = !db.defaultCondition || ui.editingCondition;
+    // [R4E] 実行契約を宣言していながら検証を通らないパッケージでは作業台を開かない。
+    if (guidedBroken()) {
+      show("abIntro", true);
+      show("abSetup", false);
+      show("abWorkbench", false);
+      pkgStatus(guidedBrokenText());
+      return;
+    }
+    // [R4E] 案内付きパッケージは、凍結された生成条件をそのまま採用して作業台へ直行する。
+    //  「ChatGPTで作る」の選び直しも provider / model / Seed の入力も求めない。
+    if (guidedEnabled()) guidedAdoptCondition();
+    var needsSetup = guidedEnabled() ? false : (!db.defaultCondition || ui.editingCondition);
     show("abIntro", false);
     show("abSetup", needsSetup);
     show("abWorkbench", !needsSetup);
@@ -4483,6 +5072,12 @@
 
   // 誤って置いた画像を外す。物理削除せず invalidations へ追記する(R3-FB と同じ形)。
   function removeImage(arm) {
+    // [R4E] 案内付きパッケージでは画像を外せない(順位の付け替えも起きない)。
+    //  技術的不良は案内カードの限定復旧で、同じ枠へ登録し直す。
+    if (guidedEnabled()) {
+      status("この実験では画像を外せません。技術的な不良の場合だけ、案内カードから同じ枠へ登録し直せます。");
+      return;
+    }
     var imageId = ui.selected[arm];
     if (!imageId) return;
     var row = null;
@@ -4549,6 +5144,60 @@
     status("この環境では自動コピーができません。欄から手動で選択してください。");
   }
 
+  // [R4E] iPhone でも確実にコピーできる経路。自動コピーが使えない/拒否された端末でも
+  //  本文を必ず手に入れられるようにする(コピーボタンだけでは詰む)。
+  //   1) 利用者の操作から Clipboard API を試す
+  //   2) 駄目なら読み取り専用欄を全選択して従来の copy を試す
+  //   3) それも駄目なら欄を開いたまま全選択し、選択メニューからコピーしてもらう
+  function guidedRevealPrompt(message) {
+    var wrap = el("abGuidedPromptWrap");
+    var box = el("abGuidedPrompt");
+    var hint = el("abGuidedCopyHint");
+    if (wrap) { wrap.hidden = false; wrap.open = true; }
+    if (box) {
+      try { box.focus({ preventScroll: true }); } catch (_) { try { box.focus(); } catch (__) { /* noop */ } }
+      try { box.setSelectionRange(0, box.value.length); } catch (_) { try { box.select(); } catch (__) { /* noop */ } }
+    }
+    if (hint) { hint.textContent = message; hint.hidden = false; }
+  }
+  function guidedLegacyCopy() {
+    var box = el("abGuidedPrompt");
+    if (!box || typeof document.execCommand !== "function") return false;
+    try {
+      var wrap = el("abGuidedPromptWrap");
+      if (wrap) { wrap.hidden = false; wrap.open = true; }
+      box.focus({ preventScroll: true });
+      box.setSelectionRange(0, box.value.length);
+      return document.execCommand("copy") === true;
+    } catch (_) { return false; }
+  }
+  function guidedCopyPrompt(item) {
+    var text = guidedPromptFor(item);
+    var label = item.caseId + "・" + item.slot + "・" + item.rank + "枚目";
+    var hint = el("abGuidedCopyHint");
+    if (hint) { hint.textContent = ""; hint.hidden = true; }
+    if (!text) { guidedMsg("コピーする本文がありません。", true); return; }
+    function done() {
+      guidedMsg("本文をコピーしました（" + label + "）。生成したら下へ登録してください。", false);
+      status(label + "の本文をコピーしました。");
+    }
+    function fallback() {
+      if (guidedLegacyCopy()) { done(); return; }
+      guidedRevealPrompt("自動コピーができませんでした。下の本文欄はすべて選択済みです。"
+        + "選択部分をタップして「コピー」を選んでください。");
+      guidedMsg("自動コピーができないため、本文欄を開いて全選択しました（" + label + "）。"
+        + "選択メニューからコピーしてください。", true);
+    }
+    var api = null;
+    try { api = (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard : null; }
+    catch (_) { api = null; }
+    if (!api) { fallback(); return; }
+    var p = null;
+    try { p = api.writeText(text); } catch (_) { fallback(); return; }
+    if (!p || typeof p.then !== "function") { fallback(); return; }
+    p.then(done, fallback);
+  }
+
   function saveDefaultCondition() {
     var seedSupport = val("abSeedSupport");
     if (seedSupport !== "supported" && seedSupport !== "unsupported") {
@@ -4580,6 +5229,16 @@
   function addImages(arm, fileList) {
     var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return Promise.resolve();
+    // [R4E] 案内付きパッケージでは通常の追加口を使わせない。生成中はキューの迂回になり、
+    //  評価中は判断の途中で画像集合が変わる。画面上でも塞いであるが、経路自体も閉じる。
+    if (guidedEnabled()) {
+      var guidedInput = el("abFile" + arm);
+      if (guidedInput) guidedInput.value = "";
+      status(guidedGenerationActive()
+        ? "画像は上の案内カードから1枚ずつ登録してください。"
+        : "評価中は画像を追加できません。技術的な不良の場合だけ、案内カードから同じ枠へ登録し直せます。");
+      return Promise.resolve();
+    }
     // 追加ラウンドでは、計画に載っていないケースへ画像を足せない。
     if (planActive() && !isPlanTarget(ui.sourceNo)) {
       status("このケースは追加対象ではありません。初回の記録のまま変更できません。");
@@ -5035,7 +5694,12 @@
     //  記録を消したらフェーズと失敗記録も初期状態へ戻す。
     db.phase = null;
     db.guidedRetries = [];
+    db.guidedRepairs = [];
     guidedLastThumb = null;
+    guidedPromptShown = "";
+    ui.blobStatus = Object.create(null);
+    ui.blobScanned = false;
+    ui.repair = null;
     // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
     // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。
     db.defaultCondition = null;
@@ -5113,7 +5777,29 @@
     reader.readAsText(file, "utf-8");
   }
 
+  // [R4E] 案内付きパッケージの再開位置。実体の走査を**終えてから**決める
+  //  (実体を失った枠を「登録済み」と数えたまま先へ進ませない)。
+  function guidedResume() {
+    if (!guidedEnabled() || !db.pkg) { render(); return; }
+    if (guidedPhase() === "evaluation") {
+      var ordered = evaluationOrderedCases();
+      var pending = ordered.filter(function (c) { return !isComplete(c.sourceNo); });
+      goToCase((pending[0] || ordered[0]).sourceNo);
+      return;
+    }
+    var idx = guidedNextIndex();
+    var item = idx >= 0 ? guidedQueue()[idx] : null;
+    goToCase(item ? item.sourceNo : db.pkg.cases[0].sourceNo);
+  }
+
   function startWorkbench() {
+    if (guidedBroken()) { render(); return; }
+    if (guidedEnabled()) {
+      guidedAdoptCondition();
+      ui.blobScanned = false;
+      guidedScanBlobs().then(guidedResume, guidedResume);
+      return;
+    }
     if (!db.defaultCondition) {
       ui.editingCondition = false;
       render();
@@ -5200,16 +5886,37 @@
       render();
     });
 
-    // [R4D] 案内付き生成の操作
+    // [R4D/R4E] 案内付き生成の操作
     on("abGuidedCopy", "click", function () {
       var idx = guidedNextIndex();
       if (idx < 0) return;
-      var item = guidedQueue()[idx];
-      copyText(guidedPromptFor(item), item.caseId + "・" + item.slot + "・" + item.rank + "枚目の本文");
-      guidedMsg("本文をコピーしました（" + item.caseId + "・" + item.slot + "・" + item.rank
-        + "枚目）。生成したら下へ登録してください。", false);
+      guidedCopyPrompt(guidedQueue()[idx]);
     });
     on("abGuidedFile", "change", function (e) { guidedRegister(e.target.files); });
+    on("abGuidedRepairFile", "change", function (e) { guidedSubmitRepair(e.target.files); });
+    on("abGuidedRepairOpen", "click", function () {
+      var audit = guidedAudit();
+      var broken = audit.entries.filter(function (en) { return !en.ok && en.row; })[0];
+      if (broken) {
+        guidedOpenRepair(broken.item.sourceNo, broken.item.slot, broken.item.rank, broken.row.imageId);
+        setVal("abGuidedRepairReason", "missing_blob");
+        return;
+      }
+      // 表示中の画像を技術的不良として直す(壊れて開けないファイルなど)。
+      var arm = ui.selected.A ? "A" : (ui.selected.B ? "B" : "");
+      var imageId = arm ? ui.selected[arm] : "";
+      var row = null;
+      (db.images || []).forEach(function (r) { if (r.imageId === imageId) row = r; });
+      if (!row) { guidedMsg("再登録する画像を先に選んでください。", true); return; }
+      guidedOpenRepair(row.sourceNo, row.arm, row.rank, row.imageId);
+      setVal("abGuidedRepairReason", "corrupt_file");
+    });
+    on("abGuidedRepairCancel", "click", function () {
+      ui.repair = null;
+      setVal("abGuidedRepairNote", "");
+      guidedMsg("", false);
+      render();
+    });
     on("abGuidedRetry", "click", function () {
       guidedRecordRetry("unusable_output", "");
     });
@@ -5218,7 +5925,16 @@
       guidedMsg("登録済み " + done + " 枚。ケースを移動すると各ケースの登録内容を確認できます（キューの順番は変わりません）。", false);
     });
     on("abGuidedStartReview", "click", function () {
-      if (!guidedComplete()) { guidedMsg("48枚すべての登録が終わるまで評価を始められません。", true); return; }
+      // [R4E] 「揃っている気がする」では始めない。厳密検査を通った時だけ進む。
+      var audit = guidedAudit();
+      if (!audit.complete) {
+        var bad = audit.entries.filter(function (en) { return !en.ok; })[0];
+        guidedMsg(bad
+          ? ("まだ評価を始められません: ケース " + bad.item.caseId + "・" + bad.item.slot + "・"
+            + bad.item.rank + "枚目（" + bad.why + "）")
+          : ("まだ評価を始められません: 手順に無い画像が " + audit.extra.length + " 件あります。"), true);
+        return;
+      }
       db.phase = "evaluation";
       persist();
       var first = evaluationOrderedCases()[0];

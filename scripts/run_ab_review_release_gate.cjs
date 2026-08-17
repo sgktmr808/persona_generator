@@ -23,7 +23,7 @@ const HERE = __dirname;
 // 実行順は R4C ブリーフ §6 の並び。
 const CHECKS = [
   { file: "check_ab_focus_assessment.cjs", marker: "R4B FOCUS ASSESSMENT BROWSER ACCEPTANCE PASSED", timeoutMs: 600000 },
-  { file: "check_ab_guided_generation.cjs", marker: "R4D GUIDED GENERATION BROWSER ACCEPTANCE PASSED", timeoutMs: 600000 },
+  { file: "check_ab_guided_generation.cjs", marker: "R4E GUIDED WORKFLOW BROWSER ACCEPTANCE PASSED", timeoutMs: 900000 },
   { file: "check_ab_resample_plan.cjs", marker: "R3-FG RESAMPLE PLAN BROWSER ACCEPTANCE PASSED", timeoutMs: 600000 },
   { file: "check_ab_comparison_drafts.cjs", marker: "R3-FE COMPARISON DRAFT BROWSER ACCEPTANCE PASSED", timeoutMs: 600000 },
   { file: "check_ab_priority_checks.cjs", marker: "R3-FD PRIORITY CHECK BROWSER ACCEPTANCE PASSED", timeoutMs: 600000 },
