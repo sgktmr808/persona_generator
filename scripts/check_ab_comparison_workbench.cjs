@@ -333,7 +333,21 @@ const PRELUDE = `
     setVal("abRev" + arm + "_intentMatch", intent);
     if (notes !== undefined) setVal("abRev" + arm + "_notes", notes);
   };
-  const store = () => JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
+  // [R4F] 記録は実験ごとの保管庫にある。索引から「いま開いている保管庫」の鍵を引く。
+  const abWsIndex = () => {
+    try { return JSON.parse(localStorage.getItem("personaGenerator.abWorkspaces.v1")); }
+    catch (_) { return null; }
+  };
+  const activeWsEntry = () => {
+    const i = abWsIndex();
+    if (!i || !i.activeId) return null;
+    return (i.workspaces || []).filter((w) => w.id === i.activeId)[0] || null;
+  };
+  const abKey = () => {
+    const w = activeWsEntry();
+    return w ? w.storeKey : "personaGenerator.abExperiment.v1";
+  };
+  const store = () => JSON.parse(localStorage.getItem(abKey()));
 `;
 
 // ---------------------------------------------------------------------------
@@ -657,18 +671,26 @@ function phaseReloadExport(arg) {
 function phaseRegression(arg) {
   return (async (a) => {
     __PRELUDE__
-    const read = () => JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
-    const countBlobs = () => new Promise((resolve) => {
+    const read = () => JSON.parse(localStorage.getItem(abKey()));
+    // [R4F] 実体は保管庫ごとに鍵を前置する。数えるのも「いま開いている保管庫」の分だけ。
+    const countBlobsFor = (w) => new Promise((resolve) => {
       const req = indexedDB.open("personaGeneratorAbImages", 1);
       req.onsuccess = () => {
         const d = req.result;
         const tx = d.transaction(["abImagesV1"], "readonly");
-        const c = tx.objectStore("abImagesV1").count();
-        c.onsuccess = () => { d.close(); resolve(c.result); };
+        const c = tx.objectStore("abImagesV1").getAllKeys();
+        c.onsuccess = () => {
+          d.close();
+          const keys = (c.result || []).map(String);
+          if (!w) { resolve(keys.length); return; }
+          if (w.blobKeyMode === "legacyBlobKeys") { resolve(keys.filter((k) => k.indexOf("::") < 0).length); return; }
+          resolve(keys.filter((k) => k.indexOf(w.id + "::") === 0).length);
+        };
         c.onerror = () => { d.close(); resolve(-1); };
       };
       req.onerror = () => resolve(-1);
     });
+    const countBlobs = () => countBlobsFor(activeWsEntry());
     const drop = (pkg, name) => {
       const dt = new DataTransfer();
       dt.items.add(new File([JSON.stringify(pkg, null, 2) + "\n"], name, { type: "application/json" }));
@@ -696,6 +718,7 @@ function phaseRegression(arg) {
     window.confirm = (m) => { window.__confirms.push(String(m)); return true; };
     drop(a.same, "same-definition.json");
     await waitFor(() => /記録はそのまま/.test(byId("abPackageStatus").textContent), "same definition");
+    const sameWsId = (activeWsEntry() || {}).id;
     now = read();
     note(now.images.length === 5 && now.reviews.length === 5 && now.comparisons.length === 1
       && now.conditions.length >= 1, "同一定義の読み直しで記録が失われた");
@@ -717,22 +740,55 @@ function phaseRegression(arg) {
     note(await countBlobs() === 5, "拒否したのに画像実体が消えた");
     note(byId("abWorkbench").hidden === false, "拒否したのに画面が戻った");
 
-    // --- (4) 承認すると旧記録・実体・生成元を消してから入れ替える ---
+    // --- (4) [R4F] 承認しても旧記録は消さない。新しい定義には別の保管庫を作る ---
+    const oldWs = activeWsEntry();
+    const oldKey = oldWs.storeKey;
+    const oldRaw = localStorage.getItem(oldKey);
+    const oldBlobs = await countBlobsFor(oldWs);
     window.__confirms = [];
     window.confirm = (m) => { window.__confirms.push(String(m)); return true; };
     drop(a.changed, "changed-definition.json");
-    await waitFor(() => /以前の記録は削除しました/.test(byId("abPackageStatus").textContent), "swapped");
+    await waitFor(() => /新しい保管庫を作りました/.test(byId("abPackageStatus").textContent), "swapped");
+    note(/削除は行いません/.test(window.__confirms[0] || ""),
+      "定義変更の確認文が削除しないことを述べていない: " + (window.__confirms[0] || ""));
+    const newWs = activeWsEntry();
+    note(newWs && newWs.id !== oldWs.id, "定義が変わったのに同じ保管庫のまま");
     now = read();
     note(now.images.length === 0 && now.reviews.length === 0 && now.comparisons.length === 0
       && now.conditions.length === 0 && now.invalidations.length === 0,
-      "定義変更後に旧記録が残っている");
-    note(Object.keys(now.reviewDrafts || {}).length === 0, "定義変更後に旧下書きが残っている");
-    note(!now.defaultCondition, "定義変更後に生成元が残っている");
-    note(await countBlobs() === 0, "定義変更後に画像実体が残っている");
+      "新しい保管庫に旧記録が入っている");
+    note(Object.keys(now.reviewDrafts || {}).length === 0, "新しい保管庫に旧下書きが入っている");
+    note(!now.defaultCondition, "新しい保管庫に旧生成元が入っている");
+    note(await countBlobsFor(newWs) === 0, "新しい保管庫に画像実体が入っている");
+    // 旧保管庫は1バイトも変わらず、実体もそのまま残る
+    note(localStorage.getItem(oldKey) === oldRaw, "定義変更で旧保管庫の記録が変わった");
+    note(await countBlobsFor(oldWs) === oldBlobs,
+      "定義変更で旧保管庫の画像実体が消えた: " + (await countBlobsFor(oldWs)) + " / " + oldBlobs);
+    note(abWsIndex().workspaces.some((w) => w.id === oldWs.id), "旧保管庫が索引から消えた");
     note(byId("abSetup").hidden === false && byId("abWorkbench").hidden === true,
       "定義変更後に生成元の登録へ戻っていない");
     note(byId("abProvider").value === "" && byId("abSeed").value === "",
       "定義変更後に前の生成元が入力欄へ残っている");
+
+    // 旧保管庫へ戻すと、記録も実体もそのまま読める(切替は破壊しない)
+    byId("abSwitchExperiment").click();
+    await waitFor(() => byId("abWorkspaces").hidden === false, "workspace list");
+    const back = byId("abWorkspaceList").querySelector('[data-ab-resume="' + oldWs.id + '"]');
+    note(!!back, "保存済み一覧に旧実験が出ていない");
+    back.click();
+    await waitFor(() => (activeWsEntry() || {}).id === oldWs.id, "old workspace resumed");
+    await waitFor(() => byId("abWorkbench").hidden === false, "old workbench");
+    const restored = read();
+    note(restored.images.length === 5 && restored.reviews.length === 5 && restored.comparisons.length === 1,
+      "旧保管庫へ戻したのに記録が欠けている: " + JSON.stringify({ i: restored.images.length, r: restored.reviews.length }));
+    note(await countBlobsFor(oldWs) === oldBlobs, "旧保管庫へ戻したのに実体が欠けている");
+    // 新しい保管庫へ戻る
+    byId("abSwitchExperiment").click();
+    await waitFor(() => byId("abWorkspaces").hidden === false, "workspace list again");
+    byId("abWorkspaceList").querySelector('[data-ab-resume="' + newWs.id + '"]').click();
+    await waitFor(() => (activeWsEntry() || {}).id === newWs.id, "new workspace resumed");
+    await waitFor(() => byId("abSetup").hidden === false, "setup for new workspace");
+    note(read().images.length === 0, "新しい保管庫に記録が混ざった");
 
     // --- (5) 画像を外すと比較が stale になり、進捗と書き出しから外れる ---
     byId("abSetupChatgpt").click();
@@ -783,22 +839,26 @@ function phaseRegression(arg) {
     note(reviewRows.every((r) => r.comparison.bestImageId === ""),
       "stale 比較が bestImageId に出ている");
 
-    // --- (6) 記録の全削除で実体も生成元も消え、生成元の登録へ戻る ---
+    // --- (6) [R4F] 削除は「開いている実験だけ」。ほかの保管庫は索引にも記録にも残る ---
+    const doomed = activeWsEntry();
+    const doomedKey = doomed.storeKey;
     window.__confirms = [];
     window.confirm = (m) => { window.__confirms.push(String(m)); return true; };
     byId("abClear").click();
-    await waitS(/画像の作成元から選び直して/, "cleared");
-    now = read();
-    note(now.images.length === 0 && now.reviews.length === 0 && now.comparisons.length === 0
-      && now.conditions.length === 0 && now.invalidations.length === 0, "全削除で記録が残っている");
-    note(Object.keys(now.reviewDrafts || {}).length === 0, "全削除で下書きが残っている");
-    note(!now.defaultCondition, "全削除で生成元が残っている");
-    note(await countBlobs() === 0, "全削除で画像実体が残っている");
-    note(byId("abSetup").hidden === false && byId("abWorkbench").hidden === true,
-      "全削除後に生成元の登録へ戻っていない");
-    note(!!now.pkg, "全削除でパッケージまで消えた");
+    await waitFor(() => byId("abWorkspaces").hidden === false && !abWsIndex().activeId, "workspace deleted");
+    note(/ほかの保存済み実験は削除されません/.test(window.__confirms[0] || ""),
+      "削除の確認文がほかの実験を守ると述べていない: " + (window.__confirms[0] || ""));
+    note(localStorage.getItem(doomedKey) === null, "削除した保管庫の記録が残っている");
+    note(await countBlobsFor(doomed) === 0, "削除した保管庫の画像実体が残っている");
+    note(!abWsIndex().workspaces.some((w) => w.id === doomed.id), "削除した保管庫が索引に残っている");
+    note(abWsIndex().workspaces.some((w) => w.id === oldWs.id), "ほかの保管庫まで索引から消えた");
+    note(localStorage.getItem(oldKey) === oldRaw, "ほかの保管庫の記録が削除で変わった");
+    note(await countBlobsFor(oldWs) === oldBlobs, "ほかの保管庫の画像実体が削除で消えた");
 
     // --- (7) 公称上限のA/B各5枚でも、10枚すべてを保持・保存できる ---
+    drop(a.changed, "changed-definition.json");
+    await waitFor(() => /新しい保管庫を作りました/.test(byId("abPackageStatus").textContent), "reloaded after delete");
+    await waitFor(() => byId("abSetup").hidden === false, "setup after reload");
     byId("abSetupChatgpt").click();
     await waitFor(() => byId("abWorkbench").hidden === false, "workbench for max images");
     for (let i = 1; i <= 5; i += 1) {
@@ -933,7 +993,7 @@ function phaseLegacy() {
       "既存レビューのスキーマが変わっている: " + legacy.schemaVersion);
     note(!!legacy.comparison && "topRankedImageId" in legacy.comparison,
       "既存レビューの comparison 形が変わっている");
-    note(!!localStorage.getItem("personaGenerator.abExperiment.v1"), "A/B側の保存が消えている");
+    note(!!localStorage.getItem(abKey()), "A/B側の保存が消えている");
 
     return { pass: problems.length === 0, problems, legacySchema: legacy.schemaVersion };
   })();
@@ -1035,9 +1095,9 @@ async function main() {
     console.log(`  reload restored source/images/reviews/comparison/progress and resumed at the incomplete case`);
     console.log(`  exports unchanged: ${reloaded.reviewRows} review rows (v2) + ${reloaded.cmpRows} comparison row + copy list`);
     console.log(`  tampered package refused without replacing the loaded one; same definition kept ${regressed.blobsBefore} blobs`);
-    console.log(`  declined swap changed nothing; approved swap wiped records+blobs+source and returned to the source picker`);
+    console.log(`  declined swap changed nothing; approved swap created a separate workspace and left the old records+blobs intact (switch back and forth verified)`);
     console.log(`  removing an image made the comparison stale: dropped from progress and both exports`);
-    console.log(`  clearing records wiped blobs and the carried source, returning to the source picker`);
+    console.log(`  deleting the open experiment removed only its records and blobs; every other workspace stayed in the index unchanged`);
     console.log(`  public maximum covered: ${regressed.maxImages} images (A/B 5 each) retained, gated, saved, and rendered on every viewport`);
     console.log(`  iPhone matrix passed: ${mobileResults.map((m) => `${m.viewportWidth}px overflow ${m.overflow}px/image ${m.bigWidth}px`).join(" | ")}; controls >=44px`);
     console.log(`  existing PCEXPORT flow still saves ${legacy.legacySchema}`);

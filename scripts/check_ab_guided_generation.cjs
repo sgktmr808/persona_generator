@@ -428,9 +428,22 @@ const PRELUDE = `
     n.dispatchEvent(new Event("change", { bubbles: true }));
     await waitS(/画像を .* 枚置きました|登録できませんでした/, "image " + arm + " " + name);
   };
-  const STORE_KEY = "personaGenerator.abExperiment.v1";
-  const store = () => JSON.parse(localStorage.getItem(STORE_KEY));
-  const rawStore = () => localStorage.getItem(STORE_KEY);
+  // [R4F] 記録は実験ごとの保管庫にある。索引から「いま開いている保管庫」を引く。
+  const WS_INDEX_KEY = "personaGenerator.abWorkspaces.v1";
+  const LEGACY_STORE_KEY = "personaGenerator.abExperiment.v1";
+  const wsIndex = () => { try { return JSON.parse(localStorage.getItem(WS_INDEX_KEY)); } catch (_) { return null; } };
+  const activeWs = () => {
+    const i = wsIndex();
+    if (!i || !i.activeId) return null;
+    return i.workspaces.filter((w) => w.id === i.activeId)[0] || null;
+  };
+  const storeKey = () => { const w = activeWs(); return w ? w.storeKey : LEGACY_STORE_KEY; };
+  const store = () => JSON.parse(localStorage.getItem(storeKey()));
+  const rawStore = () => localStorage.getItem(storeKey());
+  const blobKey = (imageId) => {
+    const w = activeWs();
+    return (!w || w.blobKeyMode === "legacyBlobKeys") ? String(imageId) : w.id + "::" + String(imageId);
+  };
   const loadPkg = (pkg, name) => {
     const dt = new DataTransfer();
     dt.items.add(new File([JSON.stringify(pkg, null, 2) + "\\n"], name, { type: "application/json" }));
@@ -461,7 +474,7 @@ const PRELUDE = `
     };
   });
   const blobCount = () => withStore("readonly", (s) => s.count());
-  const deleteBlob = (imageId) => withStore("readwrite", (s) => s.delete(imageId));
+  const deleteBlob = (imageId) => withStore("readwrite", (s) => s.delete(blobKey(imageId)));
 `;
 const GUIDED_HELPERS = `
   const gTarget = () => (byId("abGuidedTarget")||{}).textContent || "";
@@ -478,6 +491,13 @@ const GUIDED_HELPERS = `
   const startReviewVisible = () => { const n = byId("abGuidedDone"); return !!n && n.hidden === false; };
   const repairVisible = () => { const n = byId("abGuidedRepair"); return !!n && n.hidden === false; };
   const repairOpenVisible = () => { const n = byId("abGuidedRepairOpen"); return !!n && n.hidden === false; };
+  const confirmVisible = () => { const n = byId("abConfirm"); return !!n && n.hidden === false; };
+  const identityVisible = () => { const n = byId("abIdentity"); return !!n && n.hidden === false; };
+  const startConfirmed = async () => {
+    await waitFor(() => confirmVisible(), "confirm card");
+    byId("abConfirmStart").click();
+    await waitFor(() => byId("abWorkbench").hidden === false, "workbench after confirm");
+  };
   const promptBox = () => byId("abGuidedPrompt");
   const promptWrapOpen = () => { const n = byId("abGuidedPromptWrap"); return !!n && n.open === true; };
   const copyHintVisible = () => { const n = byId("abGuidedCopyHint"); return !!n && n.hidden === false; };
@@ -541,8 +561,9 @@ function phaseLegacy(pkg) {
     await waitFor(() => byId("abView").hidden === false, "ab view");
     loadPkg(p, "legacy.json");
     await waitFor(() => /読み込みました/.test(byId("abPackageStatus").textContent), "legacy loaded");
-    // 宣言の無いパッケージは従来どおり「どこで作りますか」を出す。
+    // 宣言の無いパッケージは従来どおり「どこで作りますか」を出す(開始確認は挟まない)。
     await waitFor(() => setupVisible(), "legacy setup screen");
+    note(byId("abConfirm").hidden === true, "宣言の無いパッケージで開始確認が出ている");
     byId("abSetupChatgpt").click();
     await waitFor(() => byId("abWorkbench").hidden === false, "workbench");
     note(!gCardVisible(), "宣言の無いパッケージで案内カードが出ている");
@@ -572,9 +593,23 @@ function phaseAutoAdopt(pkg) {
     window.confirm = () => true;
     loadPkg(p, "guided.json");
     await waitFor(() => /読み込みました/.test(byId("abPackageStatus").textContent), "guided loaded");
+    // [R4F] 開始確認を通るまで、本文コピーも画像登録も開かない。
+    await waitFor(() => confirmVisible(), "confirm card before work");
+    note(byId("abWorkbench").hidden === true, "確認前に作業台が開いている");
+    note(byId("abGuidedCopy").offsetParent === null, "確認前に本文コピーが見えている");
+    note(byId("abGuidedFile").offsetParent === null, "確認前に画像の投入口が見えている");
+    const facts = byId("abConfirmFacts").textContent;
+    note(/fixture-guided/.test(facts), "確認カードに実験IDが無い: " + facts);
+    note(/4 件/.test(facts), "確認カードにケース数が無い: " + facts);
+    note(/16 枚/.test(facts), "確認カードに必要枚数が無い: " + facts);
+    note(/合成モデルUI/.test(facts) && /固定/.test(facts), "確認カードに固定の生成条件が無い: " + facts);
+    byId("abConfirmStart").click();
     await waitFor(() => byId("abWorkbench").hidden === false, "workbench without setup");
     // 「ChatGPTで作る」も provider / model / Seed も一切触っていない。
     note(!setupVisible(), "案内付きパッケージで設定画面が出ている");
+    note(identityVisible(), "実験の身元パネルが出ていない");
+    note(/fixture-guided/.test(byId("abIdentityId").textContent), "身元パネルの実験IDが違う: "
+      + byId("abIdentityId").textContent);
     const c = store().defaultCondition;
     note(!!c, "固定の生成条件が自動採用されていない");
     note(c && c.provider === "openai", "provider が固定値でない: " + (c && c.provider));
@@ -842,7 +877,8 @@ function phaseReloadResume(expectRetries) {
 function phaseMutateStore(spec) {
   return (async (s) => {
     __PRELUDE__
-    localStorage.setItem(STORE_KEY, s.good);
+    const key = storeKey();
+    localStorage.setItem(key, s.good);
     const d = JSON.parse(s.good);
     const first = d.images[0];
     const copyRow = () => JSON.parse(JSON.stringify(first));
@@ -867,7 +903,7 @@ function phaseMutateStore(spec) {
     } else {
       problems.push("unknown mutation: " + s.kind);
     }
-    localStorage.setItem(STORE_KEY, JSON.stringify(d));
+    localStorage.setItem(key, JSON.stringify(d));
     return { pass: problems.length === 0, problems };
   })(__ARG__);
 }
@@ -1080,16 +1116,21 @@ function phaseResetForLayout(pkg) {
     window.confirm = () => true;
     byId("abTab").click();
     await delay(200);
+    // [R4F] 削除は「いま開いている保管庫だけ」。索引からもその実験だけが外れる。
+    const before = (wsIndex() || {}).workspaces.length;
+    const deletedId = (activeWs() || {}).id;
     byId("abClear").click();
     await waitFor(() => {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return true;
-      const d = JSON.parse(raw);
-      return !d.images || d.images.length === 0;
-    }, "records cleared");
+      const i = wsIndex();
+      return i && i.workspaces.length === before - 1 && i.activeId === null
+        && byId("abWorkspaces").hidden === false;
+    }, "workspace deleted");
+    await delay(200);
+    note(!wsIndex().workspaces.some((w) => w.id === deletedId), "削除した保管庫が索引に残っている");
+    note(wsIndex().workspaces.length >= 1, "ほかの保管庫まで消えた");
     loadPkg(pk, "guided2.json");
     await waitFor(() => /読み込みました|読み直しました/.test(byId("abPackageStatus").textContent), "reload guided");
-    await waitFor(() => byId("abWorkbench").hidden === false, "workbench for layout");
+    await startConfirmed();
     note(!setupVisible(), "記録削除のあとに設定画面が出ている");
     note(gCardVisible(), "レイアウト用の再読込で案内カードが出ていない");
     await guidedPut("layout-1.png", 700);

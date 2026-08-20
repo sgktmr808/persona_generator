@@ -6,6 +6,17 @@ const crypto=require("node:crypto"),{spawn}=require("node:child_process");
 const ROOT="/Users/sgktmr/persona_generator";
 const CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+// [R4F] SIGTERM を送っただけで先へ進むと、終了しきる前に Node が落ちて Chrome が残る。
+//  終了を待ち、待てなければ SIGKILL する。
+function closeChrome(chrome){
+  return new Promise((resolve)=>{
+    if(!chrome||chrome.exitCode!==null||chrome.signalCode!==null){resolve();return;}
+    const t=setTimeout(()=>{ try{chrome.kill("SIGKILL");}catch(_){} resolve(); },3000);
+    chrome.once("exit",()=>{clearTimeout(t);resolve();});
+    try{chrome.kill("SIGTERM");}catch(_){clearTimeout(t);resolve();}
+  });
+}
+const sockets=new Set();
 const sha=t=>crypto.createHash("sha256").update(Buffer.from(t,"utf8")).digest("hex");
 function ct(f){return f.endsWith(".html")?"text/html; charset=utf-8":"application/octet-stream";}
 function server(){return http.createServer((q,s)=>{const t=path.resolve(ROOT,"."+(q.url==="/"?"/index.html":q.url.split("?")[0]));
@@ -57,7 +68,9 @@ function legacyRecord(pkg){
 
 (async()=>{
   const pkg=pkgFixture(); const legacy=legacyRecord(pkg);
-  const srv=server(); await new Promise(r=>srv.listen(0,"127.0.0.1",r));
+  const srv=server();
+  srv.on("connection",(sock)=>{sockets.add(sock);sock.on("close",()=>sockets.delete(sock));});
+  await new Promise(r=>srv.listen(0,"127.0.0.1",r));
   const base=`http://127.0.0.1:${srv.address().port}`;
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"fccompat-"));
   const chrome=spawn(CHROME,["--headless=new","--disable-gpu","--no-first-run","--no-default-browser-check",
@@ -70,8 +83,9 @@ function legacyRecord(pkg){
     const s=a.sessionId;
     await c.send("Runtime.enable",{},s); await c.send("Page.enable",{},s);
     await wait(1200);
-    // R3-FB 相当の記録を先に置く
-    await c.send("Runtime.evaluate",{expression:`localStorage.setItem("personaGenerator.abExperiment.v1", ${JSON.stringify(JSON.stringify(legacy))})`},s);
+    // R3-FB 相当の記録(R4F より前の単一保管庫)を先に置く
+    const legacyRaw = JSON.stringify(legacy);
+    await c.send("Runtime.evaluate",{expression:`localStorage.setItem("personaGenerator.abExperiment.v1", ${JSON.stringify(legacyRaw)})`},s);
     await c.send("Page.reload",{},s); await wait(1800);
     const r=await c.send("Runtime.evaluate",{expression:`(async()=>{
       const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
@@ -86,7 +100,15 @@ function legacyRecord(pkg){
       out.reviewVerdict=byId("abRevA_verdict")?byId("abRevA_verdict").value:null;
       out.reviewNotes=byId("abRevA_notes")?byId("abRevA_notes").value:null;
       out.anatomy=byId("abRevA_failures")?byId("abRevA_failures").querySelector('[data-ab-failure-code="anatomy"]').querySelector("input").checked:null;
-      const stored=JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
+      // [R4F] 記録は移行先の保管庫にある。移行前のキーは**そのまま**残っていること。
+      const idx=JSON.parse(localStorage.getItem("personaGenerator.abWorkspaces.v1"));
+      out.indexOk=!!idx&&idx.schemaVersion==="persona-ab-workspaces.v1";
+      out.workspaceCount=idx?idx.workspaces.length:0;
+      const w=idx?idx.workspaces.filter(x=>x.id===idx.activeId)[0]:null;
+      out.activeIsMigrated=!!w&&w.blobKeyMode==="legacyBlobKeys";
+      out.migrated=!!idx&&!!idx.legacyMigratedAt;
+      out.legacyRawKept=localStorage.getItem("personaGenerator.abExperiment.v1");
+      const stored=JSON.parse(localStorage.getItem(w?w.storeKey:"personaGenerator.abExperiment.v1"));
       out.imagesKept=stored.images.length; out.reviewsKept=stored.reviews.length;
       out.conditionsKept=stored.conditions.length;
       out.inferredDefault=stored.defaultCondition?stored.defaultCondition.imageSeed:null;
@@ -106,12 +128,28 @@ function legacyRecord(pkg){
       ["既存レビューを載せ直す(判定)", v.reviewVerdict==="hold"],
       ["既存レビューを載せ直す(コメント)", v.reviewNotes==="旧記録"],
       ["既存レビューを載せ直す(失敗分類)", v.anatomy===true],
+      // [R4F] 移行の非破壊性
+      ["保管庫の索引が作られる", v.indexOk===true],
+      ["移行済みの印が付く", v.migrated===true],
+      ["保管庫が1つだけ作られる", v.workspaceCount===1],
+      ["移行した保管庫は実体の鍵を変えない", v.activeIsMigrated===true],
+      ["移行前の保管庫を1バイトも変えずに残す", v.legacyRawKept===legacyRaw],
     ];
     let ok=true;
     checks.forEach(([n,p])=>{ if(!p){console.log("NG:",n);ok=false;} });
-    console.log(JSON.stringify(v));
+    const shown=Object.assign({},v); delete shown.legacyRawKept;
+    shown.legacyRawIdentical=(v.legacyRawKept===legacyRaw);
+    console.log(JSON.stringify(shown));
     console.log(`OK: R3-FB 記録の移行なし読み込み ${checks.length} 件`);
     console.log(ok?"PASS":"FAIL");
-    process.exit(ok?0:1);
-  } finally { if(c)c.close(); chrome.kill("SIGTERM"); await wait(400); srv.close(); fs.rmSync(dir,{recursive:true,force:true}); }
-})().catch(e=>{console.error(e);process.exit(1);});
+    // [R4F] process.exit() をここで呼ぶと finally が走らず、Chrome が残る。
+    //  終了コードだけを立てて、後始末は finally に任せる。
+    process.exitCode = ok?0:1;
+  } finally {
+    if(c)c.close();
+    await closeChrome(chrome);
+    srv.close();
+    for (const sock of sockets) { try { sock.destroy(); } catch(_){} }
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+})().catch(e=>{console.error(e);process.exitCode=1;});

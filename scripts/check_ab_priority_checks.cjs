@@ -390,7 +390,21 @@ const PRELUDE = `
     return row ? row.querySelector("select").value : null;
   };
   const setPrioAll = (arm, map) => { Object.keys(map).forEach((k) => setPrio(arm, k, map[k])); };
-  const store = () => JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
+  // [R4F] 記録は実験ごとの保管庫にある。索引から「いま開いている保管庫」の鍵を引く。
+  const abWsIndex = () => {
+    try { return JSON.parse(localStorage.getItem("personaGenerator.abWorkspaces.v1")); }
+    catch (_) { return null; }
+  };
+  const activeWsEntry = () => {
+    const i = abWsIndex();
+    if (!i || !i.activeId) return null;
+    return (i.workspaces || []).filter((w) => w.id === i.activeId)[0] || null;
+  };
+  const abKey = () => {
+    const w = activeWsEntry();
+    return w ? w.storeKey : "personaGenerator.abExperiment.v1";
+  };
+  const store = () => JSON.parse(localStorage.getItem(abKey()));
   const loadPkg = (pkg, name) => {
     const dt = new DataTransfer();
     dt.items.add(new File([JSON.stringify(pkg, null, 2) + "\\n"], name, { type: "application/json" }));

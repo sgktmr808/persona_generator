@@ -354,7 +354,21 @@ const PRELUDE = `
     return row ? row.querySelector("select").value : null;
   };
   const setPrioAll = (arm, map) => { Object.keys(map).forEach((k) => setPrio(arm, k, map[k])); };
-  const store = () => JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
+  // [R4F] 記録は実験ごとの保管庫にある。索引から「いま開いている保管庫」の鍵を引く。
+  const abWsIndex = () => {
+    try { return JSON.parse(localStorage.getItem("personaGenerator.abWorkspaces.v1")); }
+    catch (_) { return null; }
+  };
+  const activeWsEntry = () => {
+    const i = abWsIndex();
+    if (!i || !i.activeId) return null;
+    return (i.workspaces || []).filter((w) => w.id === i.activeId)[0] || null;
+  };
+  const abKey = () => {
+    const w = activeWsEntry();
+    return w ? w.storeKey : "personaGenerator.abExperiment.v1";
+  };
+  const store = () => JSON.parse(localStorage.getItem(abKey()));
   const loadPkg = (pkg, name) => {
     const dt = new DataTransfer();
     dt.items.add(new File([JSON.stringify(pkg, null, 2) + "\\n"], name, { type: "application/json" }));
@@ -408,7 +422,7 @@ const FOCUS_HELPERS = `
     return n ? n.textContent : null;
   };
   const reviewCount = () => {
-    const raw = localStorage.getItem("personaGenerator.abExperiment.v1");
+    const raw = localStorage.getItem(abKey());
     return raw ? (JSON.parse(raw).reviews || []).length : 0;
   };
   const saveCase = async (label, expectAtLeast) => {
@@ -619,7 +633,7 @@ function phaseRetention() {
     note(getFocusField("A", "targetSharpness") === "pass", "ケース移動で A1 の合焦入力が消えている");
     await pick("B", 1);
     note(getFocusField("B", "targetVisibility") === "indeterminate", "ケース移動で B2 の合焦入力が消えている");
-    const drafts = Object.keys(JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1")).reviewDrafts).length;
+    const drafts = Object.keys(JSON.parse(localStorage.getItem(abKey())).reviewDrafts).length;
     return { pass: problems.length === 0, problems, drafts };
   })();
 }
@@ -721,7 +735,7 @@ function phaseRejectInvalid(arg) {
   return (async (a) => {
     __PRELUDE__
     window.confirm = () => { problems.push("rejected package must not open a confirm dialog"); return false; };
-    const before = JSON.stringify(JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1")).reviews.length);
+    const before = JSON.stringify(JSON.parse(localStorage.getItem(abKey())).reviews.length);
     let count = 0;
     for (const item of a.invalid) {
       const verdict = await loadAndExpectRejected(item.pkg, "invalid.json", item.label);
@@ -729,7 +743,7 @@ function phaseRejectInvalid(arg) {
       note(verdict.indexOf(item.field) >= 0, item.label + " の理由に項目名が出ていない: " + verdict);
       count += 1;
     }
-    const after = JSON.stringify(JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1")).reviews.length);
+    const after = JSON.stringify(JSON.parse(localStorage.getItem(abKey())).reviews.length);
     note(before === after, "拒否したのに記録が変わっている");
     return { pass: problems.length === 0, problems, count };
   })(__ARG__);

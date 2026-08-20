@@ -34,6 +34,10 @@
     font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
     -webkit-font-smoothing: antialiased;
     overscroll-behavior-y: contain;
+    /* [R4F] モバイルの自動文字拡大を止める。拡大は折返し計算のあとに効くので、
+       止めないと「折り返さないまま横へはみ出す」行が幅によって現れる。 */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
   body {
     padding-top: max(12px, env(safe-area-inset-top, 0px));
@@ -263,6 +267,7 @@
   /* 選択したその場で登録する。別の「登録」ボタンは置かない。 */
   .ab-drop {
     display: block;
+    position: relative;
     margin: 10px 0 6px;
     padding: 14px 10px;
     border: 1px dashed var(--border);
@@ -271,10 +276,22 @@
     cursor: pointer;
     min-height: 44px;
   }
+  .ab-drop:focus-within { border-color: var(--accent-2); border-style: solid; }
   .ab-drop[data-ab-over="true"] { border-color: var(--accent-2); border-style: solid; }
   .ab-drop[aria-disabled="true"] { opacity: .5; cursor: default; }
   .ab-drop-text { font-size: .9em; opacity: .9; }
-  .ab-drop-input { display: none; }
+  /* [R4F] 画像の投入口はキーボードからも辿れるようにする(display:none は
+     支援技術からも消えてしまい、「登録先が1つある」ことを確かめられない)。
+     見た目は投入口のカードのまま、入力そのものは1pxで隠す。 */
+  .ab-drop-input {
+    position: absolute;
+    left: 8px; bottom: 6px;
+    width: 1px; height: 1px;
+    padding: 0; margin: 0; border: 0;
+    opacity: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
 
   .ab-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
   .ab-thumb {
@@ -434,6 +451,70 @@
   #abGuidedRepairReason, #abGuidedRepairNote {
     width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px;
   }
+  /* [R4F] 実験の身元・保存済み実験・開始確認。
+     どの実験を操作しているかを、本文コピーや画像登録より前に必ず読ませる。 */
+  .ab-identity { margin-bottom: 12px; }
+  .ab-identity-head {
+    display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; min-width: 0;
+  }
+  .ab-identity-state {
+    font-weight: 700; padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--border); white-space: nowrap;
+  }
+  .ab-identity[data-ab-state="resume"] .ab-identity-state { color: #b87931; border-color: #b87931; }
+  .ab-identity[data-ab-state="generation"] .ab-identity-state { color: #b87931; }
+  .ab-identity[data-ab-state="evaluation"] .ab-identity-state { color: #2f7d5a; }
+  .ab-identity[data-ab-state="done"] .ab-identity-state { color: #2f7d5a; }
+  .ab-identity-kind { font-size: .82em; opacity: .9; white-space: nowrap; }
+  .ab-identity-title {
+    font-size: 1.1em; font-weight: 700; line-height: 1.5; margin-top: 8px;
+    min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal;
+  }
+  .ab-identity-id, .ab-identity-progress {
+    margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; white-space: normal; line-height: 1.5;
+  }
+  .ab-identity-progress { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #abSwitchExperiment { min-height: 44px; font-size: 15px; }
+
+  .ab-ws-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+  .ab-ws {
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px; min-width: 0;
+  }
+  .ab-ws[data-ab-active="true"] { border-color: var(--accent-2, var(--border)); }
+  .ab-ws-title {
+    font-weight: 700; line-height: 1.5; min-width: 0;
+    overflow-wrap: anywhere; word-break: break-word; white-space: normal;
+  }
+  .ab-ws-meta {
+    font-size: .86em; line-height: 1.5; margin-top: 4px; min-width: 0;
+    overflow-wrap: anywhere; white-space: normal; color: var(--text-dim);
+  }
+  .ab-ws .row { margin-top: 8px; }
+  .ab-ws button { min-height: 44px; }
+  .ab-ws-empty { line-height: 1.6; }
+
+  .ab-confirm-title {
+    font-size: 1.15em; font-weight: 700; line-height: 1.5; margin-bottom: 8px;
+    min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal;
+  }
+  .ab-confirm-facts { margin: 0; }
+  .ab-confirm-fact {
+    display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 0;
+    border-top: 1px solid var(--border); min-width: 0; line-height: 1.5;
+  }
+  .ab-confirm-fact:first-child { border-top: 0; }
+  .ab-confirm-key { flex: 0 0 auto; color: var(--text-dim); font-size: .9em; }
+  .ab-confirm-val { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; white-space: normal; font-weight: 600; }
+  #abConfirmStart { min-height: 44px; font-size: 16px; }
+
+  /* [R4F] 削除は通常の開始・切替から離し、開いた人にだけ見せる。 */
+  .ab-danger { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .ab-danger > summary {
+    cursor: pointer; min-height: 44px; display: flex; align-items: center;
+    min-width: 0; overflow-wrap: anywhere; white-space: normal;
+  }
+  .ab-danger-btn { color: var(--danger); border-color: rgba(255,90,90,0.5); }
+  .ab-danger-state { line-height: 1.6; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
   .ab-missing { margin-top: 4px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
@@ -658,15 +739,59 @@
 
   <section id="abView" role="tabpanel" aria-labelledby="abTab" hidden>
 
+    <!-- [R4F] いま何の実験を操作しているか。本文コピーや画像登録より前に必ず出す。 -->
+    <section id="abIdentity" class="card ab-identity" hidden aria-label="開いている実験">
+      <div class="ab-identity-head">
+        <span id="abIdentityState" class="ab-identity-state">新規</span>
+        <span id="abIdentityKind" class="ab-identity-kind"></span>
+      </div>
+      <div id="abIdentityTitle" class="ab-identity-title"></div>
+      <div id="abIdentityId" class="ab-identity-id sub"></div>
+      <div id="abIdentityProgress" class="ab-identity-progress"></div>
+      <div class="row">
+        <button id="abSwitchExperiment" class="grow" type="button">別の実験を開始・切り替え</button>
+      </div>
+    </section>
+
     <div id="abIntro" class="card">
       <div class="section-title">A/B実験</div>
       <p class="section-lead">実験パッケージを開くと、A と B を見比べて評価する作業台になります。パッケージも記録もこの端末の中だけに保存され、どこにも送信されません。</p>
-      <div class="row">
+      <div id="abIntroRow" class="row">
         <button id="abOpenButton" class="grow primary" type="button">パッケージを読み込む</button>
         <input id="abFileInput" type="file" accept=".json,application/json" style="display:none;" />
       </div>
       <div id="abPackageStatus" class="review-status"></div>
     </div>
+
+    <!-- [R4F] 保存済み実験の一覧。切り替えても、ほかの実験の記録と画像は消えない。 -->
+    <section id="abWorkspaces" class="card ab-workspaces" hidden>
+      <div class="section-title">保存済み実験</div>
+      <p id="abWorkspacesLead" class="section-lead">この端末に保管されている実験です。切り替えても、ほかの実験の記録と画像は消えません。</p>
+      <div id="abWorkspaceList" class="ab-ws-list"></div>
+      <div class="row">
+        <button id="abStartNewExperiment" class="grow primary" type="button">既存データを保管して新しい実験を開始</button>
+      </div>
+      <div id="abWorkspacesStatus" class="review-status"></div>
+      <!-- [R4F] 削除は開始・再開とは別の操作。開いた人にだけ、対象と件数を示して見せる。 -->
+      <details id="abWsDanger" class="ab-danger">
+        <summary class="sub">保存した実験を端末から削除する（元に戻せません）</summary>
+        <p class="sub ab-danger-state">削除は開始・再開とは別の操作です。選んだ実験だけを消し、ほかの実験はそのまま残します。</p>
+        <div id="abWsDangerList" class="ab-ws-list"></div>
+      </details>
+    </section>
+
+    <!-- [R4F] 開始確認。ここを通るまで本文コピーも画像登録も開かない。 -->
+    <section id="abConfirm" class="card ab-confirm" hidden>
+      <div class="section-title">この実験を始めますか？</div>
+      <div id="abConfirmTitle" class="ab-confirm-title"></div>
+      <div id="abConfirmFacts" class="ab-confirm-facts"></div>
+      <div class="row">
+        <button id="abConfirmStart" class="grow primary" type="button">この実験を開始</button>
+      </div>
+      <div class="row">
+        <button id="abConfirmCancel" class="grow" type="button">やめる</button>
+      </div>
+    </section>
 
     <div id="abSetup" class="card" hidden>
       <div class="section-title">どこで画像を作りますか？</div>
@@ -851,7 +976,7 @@
         <p class="sub ab-caution">順位・preference は観測記録です。採用判定としては扱いません。</p>
       </div>
 
-      <details class="card">
+      <details id="abManage" class="card">
         <summary class="section-title">書き出しと管理</summary>
         <div id="abProgressSummary" class="sub"></div>
         <div class="row"><button id="abExportReviews" class="grow" type="button">レビューJSONL</button></div>
@@ -861,9 +986,14 @@
         <input id="abResamplePlanInput" type="file" accept=".json,application/json" style="display:none;" />
         <div id="abResamplePlanState" class="sub"></div>
         <div class="row"><button id="abDropResamplePlan" class="grow" type="button" hidden>追加レビュー計画をやめる</button></div>
-        <div class="row"><button id="abEditCondition" class="grow" type="button">生成条件を変更</button></div>
         <div class="row"><button id="abLoadAnother" class="grow" type="button">別のパッケージを読み込む</button></div>
-        <div class="row"><button id="abClear" class="grow" type="button">この実験の記録を削除</button></div>
+        <div class="row"><button id="abEditCondition" class="grow" type="button">生成条件を変更</button></div>
+        <!-- [R4F] 削除は通常の開始・切替から離し、開いた人にだけ見せる。 -->
+        <details id="abDanger" class="ab-danger">
+          <summary class="sub">この実験を端末から削除する（元に戻せません）</summary>
+          <div id="abDangerState" class="sub ab-danger-state"></div>
+          <div class="row"><button id="abClear" class="grow ab-danger-btn" type="button">この実験の記録と画像を削除</button></div>
+        </details>
       </details>
 
       <div id="abStatus" class="review-status"></div>
@@ -2152,6 +2282,7 @@
   } else {
     renderReviewAvailability();
   }
+
 })();
 </script>
 <script>
@@ -2181,10 +2312,186 @@
   "use strict";
 
   var PACKAGE_SCHEMA = "persona-experiment-package.v1";
-  var STORE_KEY = "personaGenerator.abExperiment.v1";
+  // [R4F] R4F より前の「唯一の保管庫」。移行後も**消さずに残す**(移行前へ戻せる控え)。
+  var LEGACY_STORE_KEY = "personaGenerator.abExperiment.v1";
+  // 実験ごとの保管庫。キーは LEGACY_STORE_KEY + ".ws." + 保管庫ID。
+  var WS_STORE_PREFIX = "personaGenerator.abExperiment.v1.ws.";
+  var WS_INDEX_KEY = "personaGenerator.abWorkspaces.v1";
+  var WS_INDEX_SCHEMA = "persona-ab-workspaces.v1";
   var IMAGE_DB = "personaGeneratorAbImages";
   var IMAGE_STORE = "abImagesV1";
   var ARMS = ["A", "B"];
+
+  // ---------------------------------------------------------------------------
+  // [R4F] 実験ワークスペース
+  //
+  //  R4F より前は保管庫が1つしか無く、別のパッケージを読むと「古い記録を全部消して
+  //  から入れ替える」しか道が無かった。さらに再読み込みは、その唯一の保管庫を無言で
+  //  再開したので、別の実験を始めたつもりで前の実験へ画像を登録できてしまった。
+  //
+  //  R4F では実験ごとに保管庫を分ける:
+  //   - 身元は experimentId + definitionSha256 の**両方**から決まる。同じIDでも定義が
+  //     違えば別の保管庫になり、古い評価が新しい本文へ紐づくことがない。
+  //   - 切り替えはほかの保管庫の記録も画像実体も1件も消さない。
+  //   - 画像実体の鍵は保管庫ごとに前置する。ただし移行した保管庫だけは**元の鍵のまま**に
+  //     して、既存の実体を1バイトも触らない。
+  // ---------------------------------------------------------------------------
+  var wsIndex = null;      // 保管庫の索引
+  var activeWs = null;     // いま開いている保管庫(選択画面では null)
+  var wsFailure = "";      // 移行・保存に失敗した理由。空でないときは作業台を開かない
+  var entryMode = "normal"; // "normal" | "new-guided"
+
+  function fnv1aHex(text) {
+    var h = 0x811c9dc5;
+    var s = String(text == null ? "" : text);
+    for (var i = 0; i < s.length; i += 1) {
+      var code = s.charCodeAt(i);
+      h ^= code & 0xff;
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+      h ^= (code >> 8) & 0xff;
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return ("0000000" + h.toString(16)).slice(-8);
+  }
+  //  保管庫の身元。definitionSha256 を丸ごと持つので、実験IDの整形で別実験が
+  //  同じ鍵になることはない(実験IDのハッシュも併記して二重に分ける)。
+  function workspaceIdFor(experimentId, definitionSha256) {
+    var safe = String(experimentId == null ? "" : experimentId).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 64);
+    return "ws-" + safe + "-" + fnv1aHex(experimentId) + "-" + String(definitionSha256 == null ? "" : definitionSha256);
+  }
+  function guidedDeclaredIn(pkg) {
+    return !!(pkg && pkg.experiment && pkg.experiment.generationExecution);
+  }
+  function requiredImagesOf(pkg) {
+    var per = pkg && pkg.policy && typeof pkg.policy.requiredImagesPerArm === "number"
+      ? pkg.policy.requiredImagesPerArm : 0;
+    var cases = pkg && Array.isArray(pkg.cases) ? pkg.cases.length : 0;
+    return per > 0 && cases ? per * cases * ARMS.length : 0;
+  }
+  function blankIndex() {
+    return { schemaVersion: WS_INDEX_SCHEMA, activeId: null, legacyMigratedAt: null, workspaces: [] };
+  }
+  function readIndex() {
+    var raw = null;
+    try { raw = localStorage.getItem(WS_INDEX_KEY); } catch (_) { raw = null; }
+    if (!raw) return blankIndex();
+    var parsed = null;
+    try { parsed = JSON.parse(raw); } catch (_) { parsed = null; }
+    if (!parsed || parsed.schemaVersion !== WS_INDEX_SCHEMA || !Array.isArray(parsed.workspaces)) return blankIndex();
+    return {
+      schemaVersion: WS_INDEX_SCHEMA,
+      activeId: typeof parsed.activeId === "string" ? parsed.activeId : null,
+      legacyMigratedAt: typeof parsed.legacyMigratedAt === "string" ? parsed.legacyMigratedAt : null,
+      workspaces: parsed.workspaces.filter(function (w) {
+        return w && typeof w.id === "string" && typeof w.storeKey === "string";
+      })
+    };
+  }
+  function writeIndex(idx) {
+    try { localStorage.setItem(WS_INDEX_KEY, JSON.stringify(idx)); return true; }
+    catch (_) { return false; }
+  }
+  function wsById(id) {
+    var hit = null;
+    (wsIndex ? wsIndex.workspaces : []).forEach(function (w) { if (w.id === id) hit = w; });
+    return hit;
+  }
+  function wsTitle(ws) {
+    if (!ws) return "";
+    return ws.title && ws.title !== ws.experimentId ? ws.title : ws.experimentId;
+  }
+  function readWsRaw(ws) {
+    if (!ws) return null;
+    try { return localStorage.getItem(ws.storeKey); } catch (_) { return null; }
+  }
+  //  保管庫の中身の要約。ほかの保管庫を開かずに件数だけ数える(記録の書き換えはしない)。
+  function wsCounts(ws) {
+    var out = { images: 0, reviews: 0, comparisons: 0, cases: ws ? (ws.caseCount || 0) : 0, hasPkg: false };
+    var raw = readWsRaw(ws);
+    if (!raw) return out;
+    var d = null;
+    try { d = JSON.parse(raw); } catch (_) { return out; }
+    if (!d) return out;
+    out.hasPkg = !!d.pkg;
+    var dead = Object.create(null);
+    (d.invalidations || []).forEach(function (v) { if (v && v.imageId) dead[v.imageId] = true; });
+    out.images = (d.images || []).filter(function (r) { return r && !dead[r.imageId]; }).length;
+    out.reviews = (d.reviews || []).length;
+    out.comparisons = (d.comparisons || []).length;
+    out.phase = d.phase || null;
+    return out;
+  }
+  function wsRecordSummary(ws) {
+    var c = wsCounts(ws);
+    return "画像 " + c.images + " 件・評価 " + c.reviews + " 件・比較 " + c.comparisons + " 件";
+  }
+  function wsProgressText(ws) {
+    var c = wsCounts(ws);
+    if (ws && ws.workflow === "guided" && ws.requiredImages) {
+      return "画像生成 " + c.images + " / " + ws.requiredImages;
+    }
+    return "登録画像 " + c.images + " 件・評価 " + c.reviews + " 件";
+  }
+
+  //  R4F 以前の単一保管庫を、中身をそのままに1つの保管庫へ移す。
+  //   - 元のキーは**消さない**(移行前へ戻せる控えとして残す)
+  //   - 先に記録を書き写し、読み直して一致を確かめてから索引を更新する
+  //   - 何度実行しても結果が同じ(印と保管庫の存在の両方で守る)
+  //   - localStorage.clear() もデータベースごとの削除も使わない
+  function migrateLegacySingleton(idx) {
+    if (idx.legacyMigratedAt) return { ok: true, migrated: false };
+    var raw = null;
+    try { raw = localStorage.getItem(LEGACY_STORE_KEY); } catch (_) { raw = null; }
+    if (!raw) {
+      idx.legacyMigratedAt = nowIso();
+      return { ok: writeIndex(idx), migrated: false, reason: "索引を保存できませんでした。" };
+    }
+    var parsed = null;
+    try { parsed = JSON.parse(raw); } catch (_) { parsed = null; }
+    var pkg = parsed && parsed.pkg;
+    if (!pkg || !pkg.experiment || !pkg.experiment.experimentId || !pkg.definitionSha256) {
+      // 実験パッケージを持たない古い内容。移す先が決まらないので、触らずに印だけ付ける。
+      idx.legacyMigratedAt = nowIso();
+      return { ok: writeIndex(idx), migrated: false, reason: "索引を保存できませんでした。" };
+    }
+    var id = workspaceIdFor(pkg.experiment.experimentId, pkg.definitionSha256);
+    var storeKey = WS_STORE_PREFIX + id;
+    var existing = null;
+    try { existing = localStorage.getItem(storeKey); } catch (_) { existing = null; }
+    if (existing === null) {
+      try { localStorage.setItem(storeKey, raw); }
+      catch (e) { return { ok: false, reason: "移行先へ書き込めませんでした: " + (e && e.message) }; }
+      var back = null;
+      try { back = localStorage.getItem(storeKey); } catch (_) { back = null; }
+      if (back !== raw) return { ok: false, reason: "移行した記録を読み直せませんでした。" };
+    }
+    var known = false;
+    idx.workspaces.forEach(function (w) { if (w.id === id) known = true; });
+    if (!known) {
+      // 実体の鍵は移行前のまま(既存の画像を1件も書き換えない)。
+      idx.workspaces.push(makeWsEntry(id, storeKey, pkg, "legacyBlobKeys", nowIso()));
+    }
+    if (!idx.activeId) idx.activeId = id;
+    idx.legacyMigratedAt = nowIso();
+    if (!writeIndex(idx)) return { ok: false, reason: "保管庫の索引を保存できませんでした。" };
+    return { ok: true, migrated: true, id: id };
+  }
+  function makeWsEntry(id, storeKey, pkg, blobKeyMode, confirmedAt) {
+    var ts = nowIso();
+    return {
+      id: id, storeKey: storeKey,
+      experimentId: pkg.experiment.experimentId,
+      definitionSha256: pkg.definitionSha256,
+      title: typeof pkg.experiment.title === "string" && pkg.experiment.title
+        ? pkg.experiment.title : pkg.experiment.experimentId,
+      workflow: guidedDeclaredIn(pkg) ? "guided" : "legacy",
+      caseCount: Array.isArray(pkg.cases) ? pkg.cases.length : 0,
+      requiredImages: requiredImagesOf(pkg),
+      blobKeyMode: blobKeyMode,
+      createdAt: ts, updatedAt: ts,
+      confirmedAt: confirmedAt || null
+    };
+  }
 
   // 端末保存の状態。R3-FB と同じ形を保つ(defaultCondition だけ後方互換の追加項目)。
   var db = {
@@ -2225,7 +2532,14 @@
     blobStatus: Object.create(null),
     blobScanned: false,
     // [R4E] 復旧対象。{ sourceNo, slot, rank, imageId } の1枠だけ。
-    repair: null
+    repair: null,
+    // [R4F] 画面の状態。"select"(実験を選ぶ) / "confirm"(開始確認) / "work"(作業台)。
+    //  forceSelect は「利用者が明示的に選び直そうとしている」印。
+    forceSelect: false,
+    // 保存済みの記録をそのまま開いた直後かどうか。身元パネルへ「再開」と出す。
+    resumed: false,
+    // [R4F] いま画面に出している登録先の身元。保存の直前に必ず突き合わせる。
+    guidedToken: ""
   };
   var idCounter = 0;
 
@@ -2291,8 +2605,10 @@
   // 保存(この端末のブラウザ内だけ)
   // ---------------------------------------------------------------------------
   function persist() {
+    // [R4F] 保管庫を開いていないときは1バイトも書かない(選択画面で古い記録を汚さない)。
+    if (!activeWs) return false;
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({
+      localStorage.setItem(activeWs.storeKey, JSON.stringify({
         pkg: db.pkg,
         defaultCondition: db.defaultCondition,
         conditions: db.conditions,
@@ -2315,8 +2631,8 @@
     }
   }
   function restore() {
-    var raw = null;
-    try { raw = localStorage.getItem(STORE_KEY); } catch (_) { raw = null; }
+    if (!activeWs) return false;
+    var raw = readWsRaw(activeWs);
     if (!raw) return false;
     try {
       var parsed = JSON.parse(raw);
@@ -2374,11 +2690,19 @@
       req.onerror = function () { reject(req.error || new Error("open failed")); };
     });
   }
+  // [R4F] 実体の鍵。移行した保管庫だけは**元の鍵のまま**にして既存の画像を触らない。
+  //  R4F 以降に作る保管庫は保管庫IDで前置し、別実験の同じ imageId と衝突させない。
+  function blobKeyFor(imageId, ws) {
+    var w = ws || activeWs;
+    if (!w || w.blobKeyMode === "legacyBlobKeys") return String(imageId);
+    return w.id + "::" + String(imageId);
+  }
   function putImageBlob(imageId, file) {
+    var key = blobKeyFor(imageId);
     return openImageDb().then(function (d) {
       return new Promise(function (resolve, reject) {
         var tx = d.transaction([IMAGE_STORE], "readwrite");
-        tx.objectStore(IMAGE_STORE).put({ imageId: imageId, blob: file, updatedAt: nowIso() });
+        tx.objectStore(IMAGE_STORE).put({ imageId: key, blob: file, updatedAt: nowIso() });
         tx.oncomplete = function () { d.close(); resolve(true); };
         tx.onerror = function () { d.close(); reject(tx.error || new Error("put failed")); };
       });
@@ -2387,30 +2711,37 @@
   // [R4E] 1件だけの実体削除。localStorage の保存に失敗したときのロールバックで使う
   //  (実体だけ残ると、記録に無い画像が端末へ溜まっていく)。
   function deleteImageBlob(imageId) {
+    var key = blobKeyFor(imageId);
     return openImageDb().then(function (d) {
       return new Promise(function (resolve) {
         var tx = d.transaction([IMAGE_STORE], "readwrite");
-        tx.objectStore(IMAGE_STORE).delete(imageId);
+        tx.objectStore(IMAGE_STORE).delete(key);
         tx.oncomplete = function () { d.close(); resolve(true); };
         tx.onerror = function () { d.close(); resolve(false); };
       });
     }).catch(function () { return false; });
   }
   function getImageBlob(imageId) {
+    var key = blobKeyFor(imageId);
     return openImageDb().then(function (d) {
       return new Promise(function (resolve, reject) {
         var tx = d.transaction([IMAGE_STORE], "readonly");
-        var r = tx.objectStore(IMAGE_STORE).get(imageId);
+        var r = tx.objectStore(IMAGE_STORE).get(key);
         r.onsuccess = function () { d.close(); resolve(r.result ? r.result.blob : null); };
         r.onerror = function () { d.close(); reject(r.error || new Error("get failed")); };
       });
     });
   }
-  function clearImageBlobs() {
+  // [R4F] 実体の削除は**選んだ保管庫の分だけ**。データベース全体を消す操作は持たない
+  //  (ほかの実験の画像を巻き添えにしないため)。
+  function deleteWorkspaceBlobs(ws, imageIds) {
+    var ids = (imageIds || []).slice();
+    if (!ids.length) return Promise.resolve(true);
     return openImageDb().then(function (d) {
       return new Promise(function (resolve) {
         var tx = d.transaction([IMAGE_STORE], "readwrite");
-        tx.objectStore(IMAGE_STORE).clear();
+        var store = tx.objectStore(IMAGE_STORE);
+        ids.forEach(function (id) { store.delete(blobKeyFor(id, ws)); });
         tx.oncomplete = function () { d.close(); resolve(true); };
         tx.onerror = function () { d.close(); resolve(false); };
       });
@@ -3899,6 +4230,53 @@
     return hit;
   }
 
+  // [R4F] 表示していた対象と、いま保存しようとしている対象が同じであることを、
+  //  保存の直前にもう一度確かめる。保管庫・実験定義・本文ハッシュ・生成ID・登録先の
+  //  どれか1つでも食い違ったら、そのファイルは受け取らず、手順も進めない。
+  function guidedTargetToken(item) {
+    return [
+      activeWs ? activeWs.id : "",
+      activeWs ? activeWs.storeKey : "",
+      db.pkg ? db.pkg.experiment.experimentId : "",
+      db.pkg ? db.pkg.definitionSha256 : "",
+      item ? item.sequence : "", item ? item.caseId : "", item ? item.sourceNo : "",
+      item ? item.slot : "", item ? item.rank : "",
+      item ? item.armGenerationId : "", item ? item.promptSha256 : ""
+    ].join("|");
+  }
+  //  final=true のときは、端末へ保存されている実験定義とも突き合わせる。
+  function registrationGuard(item, expectToken, final) {
+    if (!activeWs || !db.pkg || !guidedEnabled() || !item) {
+      return { ok: false, reason: "開いている実験を確認できないため、この画像は登録していません。" };
+    }
+    if (activeWs.experimentId !== db.pkg.experiment.experimentId
+      || activeWs.definitionSha256 !== db.pkg.definitionSha256) {
+      return { ok: false, reason: "開いている実験と保管庫が一致しないため、この画像は登録していません。" };
+    }
+    var c = guidedCaseFor(item.sourceNo);
+    var arm = c && c.arms ? c.arms[item.slot] : null;
+    if (!arm || arm.generationId !== item.armGenerationId || arm.promptSha256 !== item.promptSha256) {
+      return { ok: false, reason: "画面に出ていた手順と実験の内容が一致しないため、この画像は登録していません。" };
+    }
+    var token = guidedTargetToken(item);
+    if (expectToken !== undefined && expectToken !== null && expectToken !== token) {
+      return { ok: false, reason: "登録先が切り替わったため、この画像は登録していません。表示中の手順を確かめてください。" };
+    }
+    if (!ui.repair && ui.guidedToken && ui.guidedToken !== token) {
+      return { ok: false, reason: "画面の表示が新しくなっています。表示中の手順を確かめてから登録してください。" };
+    }
+    if (final) {
+      var raw = readWsRaw(activeWs);
+      var saved = null;
+      try { saved = raw ? JSON.parse(raw) : null; } catch (_) { saved = null; }
+      if (!saved || !saved.pkg || saved.pkg.definitionSha256 !== db.pkg.definitionSha256
+        || saved.pkg.experiment.experimentId !== db.pkg.experiment.experimentId) {
+        return { ok: false, reason: "端末に保存されている実験定義と一致しないため、この画像は登録していません。" };
+      }
+    }
+    return { ok: true, token: token };
+  }
+
   // [R4E] 記録・生成条件・(復旧なら)無効化と復旧イベントを**一括で**確定する。
   //  localStorage が失敗したら、すべて元へ戻し、直前に書いた実体も消す。
   //  ここを通り抜けたときだけ「保存できた」と言ってよい。
@@ -3997,9 +4375,25 @@
       guidedMsg("この手順の対象を特定できませんでした。", true);
       return Promise.resolve();
     }
-    return sha256File(file).then(function (sha) {
+    // [R4F] 受け取る前に、表示していた登録先の身元を控える。
+    var picked = registrationGuard(item, undefined, false);
+    if (!picked.ok) {
+      clearInput();
+      guidedMsg(picked.reason, true);
+      render();
+      return Promise.resolve();
+    }
+    var pickedToken = picked.token;
+    return Promise.all([sha256File(file), sha256Text(guidedPromptFor(item))]).then(function (pair) {
+      var sha = pair[0];
+      var promptSha = pair[1];
       if (!sha) {
         guidedMsg("この画像のハッシュを計算できませんでした（httpsでお試しください）。", true);
+        return null;
+      }
+      // 本文そのものを取り直して照合する(記録された値を信じない)。
+      if (promptSha !== null && promptSha !== item.promptSha256) {
+        guidedMsg("画面に出ていた本文が手順の本文と一致しないため、この画像は登録していません。", true);
         return null;
       }
       var dup = guidedDuplicateOf(sha, repair ? repair.imageId : null);
@@ -4029,8 +4423,22 @@
         },
         ts: nowIso()
       };
+      // [R4F] 保存の直前にもう一度身元を確かめる(この間に実験を切り替えられていないか)。
+      var recheck = registrationGuard(item, pickedToken, true);
+      if (!recheck.ok) {
+        guidedMsg(recheck.reason, true);
+        return null;
+      }
       // 実体を先に保存する。ここが失敗したら記録は1バイトも増やさない。
       return putImageBlob(row.imageId, file).then(function () {
+        var last = registrationGuard(item, pickedToken, true);
+        if (!last.ok) {
+          // 実体だけ書けてしまった場合も、記録は作らずに実体を戻す。
+          return deleteImageBlob(row.imageId).then(function () {
+            guidedMsg(last.reason, true);
+            return null;
+          });
+        }
         return guidedCommit(row, item, repair);
       }, function () {
         guidedMsg("画像を端末へ保存できなかったため、同じ手順のままです。もう一度登録してください。", true);
@@ -4050,6 +4458,8 @@
       }
       var row = res.row;
       setPreview(row.imageId, file);
+      // [R4F] ここからは「続きを開いた」ではなく「進めている」。身元パネルの状態も切り替える。
+      ui.resumed = false;
       guidedLastThumb = { imageId: row.imageId, note: row.metadata.name };
       if (repair) ui.repair = null;
       guidedMsg((repair ? "技術的不良として同じ枠へ登録し直しました: " : "登録しました: ")
@@ -4793,7 +5203,7 @@
   function renderGuided() {
     var card = el("abGuided");
     if (!card) return;
-    if (!guidedEnabled()) { card.hidden = true; return; }
+    if (!guidedEnabled()) { card.hidden = true; ui.guidedToken = ""; return; }
     card.hidden = false;
     var q = guidedQueue();
     var total = q.length;
@@ -4836,6 +5246,7 @@
       show("abGuidedDrop", false);
       show("abGuidedRepairOpen", !repairOpen);
       guidedSyncPromptField(null);
+      ui.guidedToken = "";
       return;
     }
 
@@ -4855,8 +5266,13 @@
       show("abGuidedThumbWrap", false);
       show("abGuidedDone", true);
       guidedSyncPromptField(null);
+      ui.guidedToken = "";
+      // [R4F] 生成の終わりと評価の始まりを言葉で分ける。順位1枚目を採用画像とは呼ばない。
       setText("abGuidedDoneText",
-        total + " 枚すべてが正しいケース・A/B・順位へ登録されました。評価を始めると、事前登録された評価順で案内します。");
+        "画像生成が完了しました（" + total + " / " + total + "）。ここから評価に移ります。"
+        + total + " 枚すべてが正しいケース・A/B・順位へ登録されています。"
+        + "評価は事前登録された評価順で案内し、画像の追加・削除・差し替えはできません。"
+        + "順位や比較の結果は観測記録であり、採用の決定ではありません。");
       return;
     }
 
@@ -4869,10 +5285,12 @@
       show("abGuidedCopy", false);
       show("abGuidedDrop", false);
       guidedSyncPromptField(null);
+      ui.guidedToken = "";
       return;
     }
     var item = q[idx];
     var entry = audit.entries[idx];
+    ui.guidedToken = guidedTargetToken(item);
     setText("abGuidedTarget",
       "画像生成 " + item.sequence + " / " + total + "　ケース " + item.caseId + "・" + item.slot + "・" + item.rank + "枚目");
     var cond = guidedConditionText();
@@ -4900,10 +5318,50 @@
     }
   }
 
+  // [R4F] 画面から降ろす部品は、同時に**操作もできない**ようにする。
+  //  見えないボタンがキーボードや支援技術から押せると、「今やること1つ」という
+  //  約束が守れない(前回の誤登録は、隠れていない別導線から起きた)。
+  var LOCK_SELECTOR = "button, input, select, textarea, a[href], summary, details";
+  function lockSubtree(node, locked) {
+    if (!node) return;
+    node.hidden = !!locked;
+    if (locked) {
+      node.setAttribute("aria-hidden", "true");
+      node.setAttribute("data-ab-locked", "true");
+      try { node.inert = true; } catch (_) { /* inert 未対応でも下の無効化で塞ぐ */ }
+    } else if (node.getAttribute("data-ab-locked") === "true") {
+      node.removeAttribute("aria-hidden");
+      node.removeAttribute("data-ab-locked");
+      try { node.inert = false; } catch (_) { /* noop */ }
+    }
+    var list = node.querySelectorAll(LOCK_SELECTOR);
+    for (var i = 0; i < list.length; i += 1) {
+      var n = list[i];
+      if (locked) {
+        if ("disabled" in n) n.disabled = true;
+        n.setAttribute("data-ab-locked", "true");
+        n.setAttribute("tabindex", "-1");
+      } else if (n.getAttribute("data-ab-locked") === "true") {
+        if ("disabled" in n) n.disabled = false;
+        n.removeAttribute("data-ab-locked");
+        n.removeAttribute("tabindex");
+      }
+    }
+  }
+  // 案内付き生成の間だけ閉じる区画。ケース移動・A/B作業台・比較・管理操作。
+  var GUIDED_LOCK_IDS = ["abHeader", "abWork", "abVerdictCard", "abManage"];
+  //  描画の最初に必ず開き直す。以降の描画関数が本来の有効/無効を決め、
+  //  最後の applyGuidedGating() が必要な区画だけを閉じ直す(順序で上書きが起きない)。
+  function guidedUnlockAll() {
+    GUIDED_LOCK_IDS.forEach(function (id) { lockSubtree(el(id), false); });
+  }
+
   // [R4E] 案内付きパッケージでは、通常の画像操作を**最初から最後まで**閉じる。
   //  生成中はキューを迂回できるから。評価中は判断の途中で画像集合が変わるから
   //  (足す・外す・順位を変える・気に入らないから差し替える、をすべて禁じる)。
   //  技術的不良の復旧だけは、理由コード付きの限定経路として別に開く。
+  // [R4F] さらに生成中は、A/Bの本文カード・ケース移動・比較・管理操作ごと閉じ、
+  //  「本文コピー1つ・画像登録先1つ」だけを残す。
   function applyGuidedGating() {
     if (!guidedEnabled()) return;
     var generating = guidedGenerationActive();
@@ -4922,35 +5380,217 @@
       var n = el(id);
       if (n) { n.disabled = generating; }
     });
-    var verdictCard = el("abVerdictCard");
-    if (verdictCard) verdictCard.hidden = generating;
     // 固定された生成条件は利用者が変えられない。
     var edit = el("abEditCondition");
     if (edit) { edit.hidden = true; edit.disabled = true; }
+    if (generating) GUIDED_LOCK_IDS.forEach(function (id) { lockSubtree(el(id), true); });
+  }
+
+  // -------------------------------------------------------------------------
+  // [R4F] 画面の切り替え
+  // -------------------------------------------------------------------------
+  function currentScreen() {
+    if (wsFailure) return "select";
+    if (ui.forceSelect) return "select";
+    if (!activeWs || !db.pkg) return "select";
+    if (guidedBroken()) return "select";
+    if (guidedDeclaredIn(db.pkg) && !activeWs.confirmedAt) return "confirm";
+    return "work";
+  }
+  //  「再開」を最優先に出す。前回の続きを無言で開いていたことが、今回の誤登録の原因。
+  //  記録がある実験を開いた直後は、まずそれが**続き**であることを言う。
+  function identityStateOf() {
+    if (!activeWs || !db.pkg) return { key: "new", label: "新規" };
+    var live = (db.images || []).filter(function (r) { return !isDead(r.imageId); }).length;
+    if (guidedEnabled()) {
+      var audit = guidedAudit();
+      if (ui.resumed && (audit.valid > 0 || live > 0)) return { key: "resume", label: "再開" };
+      if (guidedPhase() === "evaluation") return { key: "evaluation", label: "評価中" };
+      if (audit.complete) return { key: "done", label: "完了" };
+      return audit.valid > 0
+        ? { key: "generation", label: "生成中" }
+        : { key: "new", label: "新規" };
+    }
+    var done = doneCount();
+    if (ui.resumed && (live || done)) return { key: "resume", label: "再開" };
+    if (done >= db.pkg.cases.length && db.pkg.cases.length) return { key: "done", label: "完了" };
+    if (live || done) return { key: "evaluation", label: "評価中" };
+    return { key: "new", label: "新規" };
+  }
+  function identityProgressText() {
+    if (!activeWs || !db.pkg) return "";
+    if (guidedEnabled()) {
+      var audit = guidedAudit();
+      return "画像生成 " + audit.valid + " / " + audit.total
+        + (audit.extra.length ? "・手順外 " + audit.extra.length + " 件" : "");
+    }
+    var live = (db.images || []).filter(function (r) { return !isDead(r.imageId); }).length;
+    return "登録画像 " + live + " 件・評価済み " + doneCount() + " / " + db.pkg.cases.length + " ケース";
+  }
+  function renderIdentity() {
+    var card = el("abIdentity");
+    if (!card) return;
+    var on = currentScreen() === "work" && !!activeWs && !!db.pkg;
+    card.hidden = !on;
+    if (!on) return;
+    var st = identityStateOf();
+    card.setAttribute("data-ab-state", st.key);
+    setText("abIdentityState", st.label);
+    setText("abIdentityKind", activeWs.workflow === "guided" ? "案内付き生成" : "従来型のA/B作業");
+    setText("abIdentityTitle", wsTitle(activeWs));
+    setText("abIdentityId", "実験ID: " + activeWs.experimentId);
+    setText("abIdentityProgress", identityProgressText());
+  }
+
+  function renderWorkspaceList() {
+    var list = el("abWorkspaceList");
+    if (!list) return;
+    clear(list);
+    var rows = wsIndex ? wsIndex.workspaces.slice() : [];
+    if (!rows.length) {
+      var empty = document.createElement("p");
+      empty.className = "sub ab-ws-empty";
+      empty.textContent = "この端末にはまだ保存された実験がありません。パッケージを読み込むと、この実験専用の保管庫が作られます。";
+      list.appendChild(empty);
+    }
+    rows.forEach(function (w) {
+      var box = document.createElement("div");
+      box.className = "ab-ws";
+      box.setAttribute("data-ab-ws", w.id);
+      box.setAttribute("data-ab-active", activeWs && activeWs.id === w.id ? "true" : "false");
+      var title = document.createElement("div");
+      title.className = "ab-ws-title";
+      title.textContent = wsTitle(w);
+      box.appendChild(title);
+      var meta = document.createElement("div");
+      meta.className = "ab-ws-meta";
+      meta.textContent = "実験ID: " + w.experimentId
+        + "　" + (w.workflow === "guided" ? "案内付き生成" : "従来型")
+        + "　" + wsProgressText(w)
+        + "　" + wsRecordSummary(w)
+        + (activeWs && activeWs.id === w.id ? "　（いま開いています）" : "");
+      box.appendChild(meta);
+      var row = document.createElement("div");
+      row.className = "row";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "grow";
+      btn.setAttribute("data-ab-resume", w.id);
+      btn.textContent = "再開";
+      btn.addEventListener("click", function () { resumeWorkspace(w.id); });
+      row.appendChild(btn);
+      box.appendChild(row);
+      list.appendChild(box);
+    });
+    setText("abStartNewExperiment", rows.length
+      ? "既存データを保管して新しい実験を開始"
+      : "実験パッケージを読み込んで開始");
+    setText("abWorkspacesLead", entryMode === "new-guided"
+      ? "案内付き生成の入口です。保存済みの実験はそのままで、選ぶまで何も操作しません。始める実験のパッケージを読み込んでください。"
+      : "この端末に保管されている実験です。切り替えても、ほかの実験の記録と画像は消えません。");
+    setText("abWorkspacesStatus", wsFailure
+      ? ("保存の移行に失敗しました: " + wsFailure + "　移行前の記録はそのまま残っています。")
+      : "");
+    renderWorkspaceDangerList(rows);
+  }
+  function renderWorkspaceDangerList(rows) {
+    var list = el("abWsDangerList");
+    if (!list) return;
+    clear(list);
+    var danger = el("abWsDanger");
+    if (danger) danger.hidden = !rows.length;
+    rows.forEach(function (w) {
+      var box = document.createElement("div");
+      box.className = "ab-ws";
+      var title = document.createElement("div");
+      title.className = "ab-ws-title";
+      title.textContent = wsTitle(w);
+      box.appendChild(title);
+      var meta = document.createElement("div");
+      meta.className = "ab-ws-meta";
+      meta.textContent = "実験ID: " + w.experimentId + "　" + wsRecordSummary(w);
+      box.appendChild(meta);
+      var row = document.createElement("div");
+      row.className = "row";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "grow ab-danger-btn";
+      btn.setAttribute("data-ab-delete", w.id);
+      btn.textContent = "この実験を削除";
+      btn.addEventListener("click", function () { deleteWorkspaceById(w.id); });
+      row.appendChild(btn);
+      box.appendChild(row);
+      list.appendChild(box);
+    });
+  }
+
+  function confirmFact(parent, key, value) {
+    var row = document.createElement("div");
+    row.className = "ab-confirm-fact";
+    var k = document.createElement("span");
+    k.className = "ab-confirm-key";
+    k.textContent = key;
+    var v = document.createElement("span");
+    v.className = "ab-confirm-val";
+    v.textContent = value;
+    row.appendChild(k);
+    row.appendChild(v);
+    parent.appendChild(row);
+  }
+  function renderConfirm() {
+    var facts = el("abConfirmFacts");
+    if (!facts || !db.pkg || !activeWs) return;
+    setText("abConfirmTitle", wsTitle(activeWs));
+    clear(facts);
+    confirmFact(facts, "実験ID", activeWs.experimentId);
+    confirmFact(facts, "ケース数", db.pkg.cases.length + " 件");
+    confirmFact(facts, "必要な画像枚数", guidedQueue().length + " 枚");
+    var cond = guidedConditionText();
+    confirmFact(facts, "生成条件", (cond || "パッケージの固定値") + "（固定・変更できません）");
+    confirmFact(facts, "この端末の記録", wsRecordSummary(activeWs));
+    confirmFact(facts, "進め方", "1手順ずつ、本文を1つコピーして画像を1枚登録します。すべて揃うまで評価画面は開きません。");
   }
 
   function render() {
-    if (!db.pkg) {
+    // 先にすべて開き直してから、必要な区画だけを閉じ直す。
+    guidedUnlockAll();
+    var screen = currentScreen();
+    ui.screen = screen;
+    if (screen === "select") {
+      if (db.pkg && guidedBroken()) pkgStatus(guidedBrokenText());
+      renderIdentity();
       show("abIntro", true);
+      // 主導線は1つだけにする。読み込みの入口は下の「保存済み実験」側が持つ。
+      show("abIntroRow", false);
+      show("abWorkspaces", true);
+      show("abConfirm", false);
       show("abSetup", false);
       show("abWorkbench", false);
+      renderWorkspaceList();
       return;
     }
-    // [R4E] 実行契約を宣言していながら検証を通らないパッケージでは作業台を開かない。
-    if (guidedBroken()) {
-      show("abIntro", true);
+    if (screen === "confirm") {
+      renderIdentity();
+      show("abIntro", false);
+      show("abIntroRow", true);
+      show("abWorkspaces", false);
+      show("abConfirm", true);
       show("abSetup", false);
       show("abWorkbench", false);
-      pkgStatus(guidedBrokenText());
+      renderConfirm();
       return;
     }
+    show("abIntro", false);
+    show("abIntroRow", true);
+    show("abWorkspaces", false);
+    show("abConfirm", false);
     // [R4E] 案内付きパッケージは、凍結された生成条件をそのまま採用して作業台へ直行する。
     //  「ChatGPTで作る」の選び直しも provider / model / Seed の入力も求めない。
     if (guidedEnabled()) guidedAdoptCondition();
     var needsSetup = guidedEnabled() ? false : (!db.defaultCondition || ui.editingCondition);
-    show("abIntro", false);
     show("abSetup", needsSetup);
     show("abWorkbench", !needsSetup);
+    renderIdentity();
     if (needsSetup) { renderSetup(); return; }
     if (ui.sourceNo == null && db.pkg.cases.length) ui.sourceNo = db.pkg.cases[0].sourceNo;
     applyPackageText();
@@ -4961,6 +5601,13 @@
     applyGuidedGating();
     renderComparisonState();
     renderExportSummary();
+    renderDangerState();
+  }
+  function renderDangerState() {
+    if (!activeWs) return;
+    setText("abDangerState", "削除の対象: " + wsTitle(activeWs) + "（" + activeWs.experimentId + "）　"
+      + wsRecordSummary(activeWs)
+      + "　ほかの保存済み実験は削除されません。");
   }
 
   // 「その他」を選ぶまで技術的な入力欄は出さない。
@@ -5328,6 +5975,8 @@
       status("このケースは追加対象ではありません。初回の記録は変更できません。");
       return;
     }
+    // [R4F] 保存まで進めたら「続きを開いた」表示から実際の状態表示へ切り替える。
+    ui.resumed = false;
     ARMS.forEach(captureReviewDraft);
     var rowsByArm = {
       A: activeImagesFor(ui.sourceNo, "A"),
@@ -5679,29 +6328,29 @@
   // ---------------------------------------------------------------------------
   // パッケージ読み込み / 記録の削除
   // ---------------------------------------------------------------------------
-  // 削除順序を1か所に集約する:
-  //  プレビュー解放 -> 行を消す -> localStorage を先に更新 -> IndexedDB の実体を消し終える。
-  function resetRecords() {
+  // [R4F] 読み込み中の実験を画面から降ろす。**保存内容は1バイトも消さない**
+  //  (保管庫を切り替えるとき・削除の直後に、メモリ側だけを初期状態へ戻す)。
+  function clearLoadedRecords() {
     releaseAllPreviews();
+    db.pkg = null;
     db.conditions = []; db.images = []; db.reviews = [];
     db.reviewDrafts = Object.create(null);
     db.comparisonDrafts = Object.create(null);
     db.comparisons = []; db.invalidations = []; db.exportedImageIds = [];
-    // 記録を消したら、初回提出を指していた追加レビュー計画も成り立たない。
     db.resamplePlan = null;
-    // [R4D] 画像を全部消したのにフェーズが「評価中」のまま残ると、0枚の状態で
-    //  評価画面に閉じ込められる。案内付き生成の進捗も記録から導く以上、
-    //  記録を消したらフェーズと失敗記録も初期状態へ戻す。
     db.phase = null;
     db.guidedRetries = [];
     db.guidedRepairs = [];
     guidedLastThumb = null;
     guidedPromptShown = "";
+    guidedCheckCache = { pkg: null, ok: false, errors: [] };
     ui.blobStatus = Object.create(null);
     ui.blobScanned = false;
     ui.repair = null;
-    // 引き継ぎ用の生成元も一緒に消す。ここを残すと、記録を消したあとや別実験へ
-    // 入れ替えたあとに、以前の provider / model / Seed が無確認で使われてしまう。
+    ui.sourceNo = null;
+    ui.guidedToken = "";
+    // 引き継ぎ用の生成元も一緒に降ろす。ここを残すと、別実験へ入れ替えたあとに
+    // 以前の provider / model / Seed が無確認で使われてしまう。
     db.defaultCondition = null;
     ui.selected.A = ""; ui.selected.B = "";
     ui.editingCondition = false;
@@ -5709,8 +6358,70 @@
     setVal("abModel", "");
     setVal("abSeedSupport", "");
     setVal("abSeed", "");
-    persist();
-    return clearImageBlobs();
+  }
+
+  // [R4F] 保管庫を開く。ほかの保管庫の記録にも画像実体にも一切触れない。
+  function activateWorkspace(ws) {
+    if (activeWs && db.pkg && activeWs.id !== ws.id) {
+      // 離れる前に、書き留めていない入力だけ保存しておく(記録は消さない)。
+      if (ui.sourceNo != null) { ARMS.forEach(captureReviewDraft); captureComparisonDraft(); }
+      persist();
+    }
+    clearLoadedRecords();
+    activeWs = ws;
+    ui.forceSelect = false;
+    var loaded = restore();
+    if (wsIndex.activeId !== ws.id) {
+      wsIndex.activeId = ws.id;
+      writeIndex(wsIndex);
+    }
+    return loaded;
+  }
+
+  // [R4F] 選んだ保管庫だけを端末から消す。ほかの保管庫は索引からも記録からも外さない。
+  function deleteWorkspaceById(id) {
+    var ws = wsById(id);
+    if (!ws) { status("その実験はこの端末に見つかりません。"); return; }
+    var wasActive = !!activeWs && activeWs.id === ws.id;
+    var saved = null;
+    var raw = readWsRaw(ws);
+    try { saved = raw ? JSON.parse(raw) : null; } catch (_) { saved = null; }
+    var imageIds = wasActive
+      ? (db.images || []).map(function (r) { return r.imageId; })
+      : ((saved && saved.images) || []).map(function (r) { return r.imageId; });
+    var legacyNote = ws.blobKeyMode === "legacyBlobKeys"
+      ? "\n（R4F 移行前の控えは記録のみ残りますが、画像の実体は戻せません）" : "";
+    if (!window.confirm("「" + wsTitle(ws) + "」\n実験ID: " + ws.experimentId
+      + "\nこの実験の " + wsRecordSummary(ws) + " と画像の実体を削除します。"
+      + "\nほかの保存済み実験は削除されません。" + legacyNote + "\n続けますか？")) return;
+    var before = wsIndex.workspaces.slice();
+    var beforeActive = wsIndex.activeId;
+    wsIndex.workspaces = wsIndex.workspaces.filter(function (w) { return w.id !== ws.id; });
+    if (wsIndex.activeId === ws.id) wsIndex.activeId = null;
+    if (!writeIndex(wsIndex)) {
+      wsIndex.workspaces = before;
+      wsIndex.activeId = beforeActive;
+      status("索引を保存できなかったため、削除していません。");
+      return;
+    }
+    try { localStorage.removeItem(ws.storeKey); } catch (_) { /* 索引からは外れている */ }
+    deleteWorkspaceBlobs(ws, imageIds).then(function (cleared) {
+      if (wasActive) {
+        clearLoadedRecords();
+        activeWs = null;
+        ARMS.forEach(clearReviewInputs);
+      }
+      ui.forceSelect = true;
+      ui.resumed = false;
+      status("「" + wsTitle(ws) + "」を削除しました。ほかの保存済み実験はそのままです。"
+        + (cleared ? "" : "（画像実体の削除に失敗しました）"));
+      pkgStatus("");
+      render();
+    });
+  }
+  function deleteActiveWorkspace() {
+    if (!activeWs) { status("開いている実験がありません。"); return; }
+    deleteWorkspaceById(activeWs.id);
   }
 
   function loadPackageFile(file) {
@@ -5726,55 +6437,69 @@
           pkgStatus("このパッケージは使えません: " + errorsText(verdict.errors));
           return;
         }
-        // 記録を引き継いでよいのは「同じ実験・同じ定義」のときだけ。
-        //  experimentId が同じでも本文や方針が変わっていれば、古い評価が新しい
-        //  プロンプトへ紐づいてしまうので、記録を残したまま差し替えてはいけない。
-        var cur = db.pkg;
-        var sameId = !!cur && cur.experiment.experimentId === parsed.experiment.experimentId;
-        var sameDef = !!cur && cur.definitionSha256 === parsed.definitionSha256;
-
-        if (cur && sameId && sameDef) {
-          db.pkg = parsed;
-          ui.sourceNo = null;
-          persist();
-          ARMS.forEach(buildReviewForm);
-          pkgStatus("同じ実験定義を読み直しました: " + parsed.experiment.experimentId
-            + "（" + parsed.cases.length + " 件・記録はそのまま）");
-          startWorkbench();
-          return;
-        }
-
-        var recordCount = db.conditions.length + db.images.length + db.reviews.length
-          + db.comparisons.length + db.invalidations.length;
-        if (cur && recordCount) {
-          var reason = sameId
-            ? "同じ実験IDですが、実験定義（本文・設定・方針）が変わっています。"
-            : "別の実験のパッケージです。";
-          if (!window.confirm(reason
-            + "\n古い記録を新しいプロンプトへ紐づけることはできないため、"
-            + "この端末に保存済みの記録（生成条件・画像・評価・比較・無効化・画像実体）を"
-            + "すべて削除してから入れ替えます。続けますか？")) {
-            pkgStatus("読み込みを中止しました。現在のパッケージと記録はそのままです。");
-            return;
-          }
-        }
-
-        // 削除を**先に**完了させてから新しいパッケージを載せる。
-        resetRecords().then(function (blobsCleared) {
-          db.pkg = parsed;
-          ui.sourceNo = null;
-          persist();
-          ARMS.forEach(buildReviewForm);
-          pkgStatus("読み込みました: " + parsed.experiment.experimentId
-            + "（" + parsed.cases.length + " 件・ハッシュ照合済み）"
-            + (cur ? "／以前の記録は削除しました" : "")
-            + (blobsCleared ? "" : "（画像実体の削除に失敗しました）"));
-          startWorkbench();
-        });
+        adoptPackage(parsed);
       });
     };
     reader.onerror = function () { pkgStatus("ファイルを読めませんでした。"); };
     reader.readAsText(file, "utf-8");
+  }
+
+  // [R4F] 読み込んだパッケージに合う保管庫を作る/選ぶ。既存の保管庫は上書きしない。
+  //  同じ実験IDでも定義ハッシュが違えば別物として扱い、必ず確認を取ったうえで
+  //  **別の保管庫**を作る(古い記録はその古い定義に付いたまま残る)。
+  function adoptPackage(parsed) {
+    var guided = guidedDeclaredIn(parsed);
+    // 案内付き専用の入口では、案内付きでないパッケージを受け取らない。
+    if (entryMode === "new-guided" && !guided) {
+      pkgStatus("これは案内付き生成パッケージではありません。保存済みの実験は変更していません。");
+      return;
+    }
+    var id = workspaceIdFor(parsed.experiment.experimentId, parsed.definitionSha256);
+    var ws = wsById(id);
+    if (!ws) {
+      var sameId = wsIndex.workspaces.filter(function (w) {
+        return w.experimentId === parsed.experiment.experimentId;
+      });
+      if (sameId.length) {
+        var kept = sameId.map(function (w) { return wsRecordSummary(w); }).join(" / ");
+        if (!window.confirm("同じ実験IDですが、実験定義（本文・設定・方針）が変わっています。"
+          + "\n古い記録（" + kept + "）はそのまま保管し、新しい定義には別の保管庫を作ります。"
+          + "\n削除は行いません。続けますか？")) {
+          pkgStatus("読み込みを中止しました。保存済みの実験は変更していません。");
+          return;
+        }
+      }
+      ws = makeWsEntry(id, WS_STORE_PREFIX + id, parsed, "namespaced", guided ? null : nowIso());
+      wsIndex.workspaces.push(ws);
+      if (!writeIndex(wsIndex)) {
+        wsIndex.workspaces = wsIndex.workspaces.filter(function (w) { return w.id !== id; });
+        pkgStatus("保管庫を保存できませんでした。保存済みの実験は変更していません。");
+        return;
+      }
+    }
+    var reopened = activateWorkspace(ws);
+    db.pkg = parsed;
+    // 表示名や必要枚数は読み込んだ定義から取り直す(記録の意味は変えない)。
+    ws.title = typeof parsed.experiment.title === "string" && parsed.experiment.title
+      ? parsed.experiment.title : parsed.experiment.experimentId;
+    ws.workflow = guided ? "guided" : "legacy";
+    ws.caseCount = parsed.cases.length;
+    ws.requiredImages = requiredImagesOf(parsed);
+    ws.updatedAt = nowIso();
+    writeIndex(wsIndex);
+    if (!persist()) {
+      pkgStatus("この端末へ保存できませんでした。保存済みの実験は変更していません。");
+      return;
+    }
+    ARMS.forEach(buildReviewForm);
+    ui.resumed = false;
+    var counts = wsCounts(ws);
+    pkgStatus("読み込みました: " + wsTitle(ws) + "（" + parsed.experiment.experimentId
+      + "・" + parsed.cases.length + " 件・ハッシュ照合済み）"
+      + (reopened ? "／記録はそのまま引き継ぎます（" + wsRecordSummary(ws) + "）"
+        : "／新しい保管庫を作りました（既存の実験は削除していません）"));
+    if (guided && !ws.confirmedAt) { render(); return; }
+    startWorkbench();
   }
 
   // [R4E] 案内付きパッケージの再開位置。実体の走査を**終えてから**決める
@@ -5790,6 +6515,80 @@
     var idx = guidedNextIndex();
     var item = idx >= 0 ? guidedQueue()[idx] : null;
     goToCase(item ? item.sourceNo : db.pkg.cases[0].sourceNo);
+  }
+
+  // [R4F] 保存済み実験を明示的に開き直す。ほかの保管庫には触れない。
+  function resumeWorkspace(id) {
+    var ws = wsById(id);
+    if (!ws) { setText("abWorkspacesStatus", "その実験はこの端末に見つかりません。"); return; }
+    dropCleanEntryFlag();
+    var loaded = activateWorkspace(ws);
+    if (!loaded || !db.pkg) {
+      setText("abWorkspacesStatus", "「" + wsTitle(ws) + "」の記録を読み出せませんでした。"
+        + "パッケージを読み込み直してください（記録は消していません）。");
+      ui.forceSelect = true;
+      render();
+      return;
+    }
+    ARMS.forEach(buildReviewForm);
+    ui.resumed = true;
+    pkgStatus("保存済みの実験を開きました: " + wsTitle(ws) + "（" + db.pkg.experiment.experimentId
+      + "・" + db.pkg.cases.length + " 件・" + wsRecordSummary(ws) + "）");
+    startWorkbench();
+  }
+
+  // [R4F] 案内付き専用の入口。保存済みの実験を残したまま、選択画面だけを出す。
+  function detectEntryMode() {
+    var q = "";
+    try { q = String(window.location.search || ""); } catch (_) { q = ""; }
+    return /(^|[?&])ab=new-guided(&|$)/.test(q) ? "new-guided" : "normal";
+  }
+  //  実験を明示的に選んだあとは通常の入口へ戻す。以後の再読み込みは、
+  //  いま選んだ実験を復元する(別のパッケージへ勝手に入れ替わらない)。
+  function dropCleanEntryFlag() {
+    if (entryMode !== "new-guided") return;
+    entryMode = "normal";
+    try {
+      var url = new URL(window.location.href);
+      url.searchParams.delete("ab");
+      var q = url.searchParams.toString();
+      window.history.replaceState(null, "", url.pathname + (q ? "?" + q : "") + (url.hash || ""));
+    } catch (_) { /* 書き換えられない環境でも動作は変えない */ }
+  }
+
+  function bootstrapWorkspaces() {
+    entryMode = detectEntryMode();
+    wsIndex = readIndex();
+    var mig = migrateLegacySingleton(wsIndex);
+    if (!mig.ok) {
+      // 失敗したら閉じる。移行前の記録はそのまま残っているので、作業台は開かない。
+      wsFailure = mig.reason || "保存の移行に失敗しました。";
+      ui.forceSelect = true;
+      pkgStatus("この端末の保存内容を安全に読み込めませんでした（" + wsFailure + "）。"
+        + "移行前の記録はそのまま残っています。保存領域の空きを確認してから開き直してください。");
+      render();
+      return;
+    }
+    if (entryMode === "new-guided") {
+      ui.forceSelect = true;
+      pkgStatus("案内付き生成の入口です。保存済みの実験はそのままです。始める実験を選んでください。");
+      render();
+      return;
+    }
+    var ws = wsIndex.activeId ? wsById(wsIndex.activeId) : null;
+    if (!ws) { ui.forceSelect = true; pkgStatus(""); render(); return; }
+    var loaded = activateWorkspace(ws);
+    if (!loaded || !db.pkg) {
+      ui.forceSelect = true;
+      pkgStatus("");
+      render();
+      return;
+    }
+    ARMS.forEach(buildReviewForm);
+    ui.resumed = true;
+    pkgStatus("保存済みの実験を復元しました: " + wsTitle(ws) + "（" + db.pkg.experiment.experimentId
+      + "・" + db.pkg.cases.length + " 件）");
+    startWorkbench();
   }
 
   function startWorkbench() {
@@ -5815,16 +6614,8 @@
     goToCase(first === null ? db.pkg.cases[0].sourceNo : first);
   }
 
-  function clearAll() {
-    if (!window.confirm("この実験の記録（生成条件・画像・評価・比較）をすべて削除しますか？")) return;
-    resetRecords().then(function (cleared) {
-      status("この実験の記録を削除しました。画像の作成元から選び直してください。"
-        + (cleared ? "" : "（画像実体の削除に失敗しました）"));
-      ARMS.forEach(clearReviewInputs);
-      ui.sourceNo = null;
-      render();
-    });
-  }
+  // [R4F] 削除は「いま開いている保管庫だけ」。通常の開始・切替からは離れた場所に置く。
+  function clearAll() { deleteActiveWorkspace(); }
 
   // ---------------------------------------------------------------------------
   // 配線(タブが開かれた最初の1回だけ)
@@ -5856,6 +6647,38 @@
 
     on("abOpenButton", "click", function () { var n = el("abFileInput"); if (n) n.click(); });
     on("abLoadAnother", "click", function () { var n = el("abFileInput"); if (n) n.click(); });
+    // [R4F] 実験の切替は主導線に置く(「書き出しと管理」の下に隠さない)。
+    on("abSwitchExperiment", "click", function () {
+      if (db.pkg && ui.sourceNo != null) { ARMS.forEach(captureReviewDraft); captureComparisonDraft(); persist(); }
+      ui.forceSelect = true;
+      pkgStatus("保存済みの実験はそのままです。開く実験を選んでください。");
+      render();
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (_) { /* noop */ }
+    });
+    on("abStartNewExperiment", "click", function () {
+      setText("abWorkspacesStatus", "既存の記録は保管したままです。新しい実験のパッケージを選んでください。");
+      var n = el("abFileInput");
+      if (n) n.click();
+    });
+    on("abConfirmStart", "click", function () {
+      if (!activeWs || !db.pkg) return;
+      dropCleanEntryFlag();
+      activeWs.confirmedAt = nowIso();
+      activeWs.updatedAt = nowIso();
+      if (!writeIndex(wsIndex)) {
+        activeWs.confirmedAt = null;
+        setText("abConfirmTitle", wsTitle(activeWs));
+        status("開始状態を保存できませんでした。保存領域の空きを確認してください。");
+        return;
+      }
+      ui.resumed = false;
+      startWorkbench();
+    });
+    on("abConfirmCancel", "click", function () {
+      ui.forceSelect = true;
+      pkgStatus("開始しませんでした。保存済みの実験は変更していません。");
+      render();
+    });
     on("abFileInput", "change", function (e) {
       var f = e.target.files && e.target.files[0];
       if (f) loadPackageFile(f);
@@ -5992,20 +6815,22 @@
     on("abClear", "click", clearAll);
     window.addEventListener("pagehide", releaseAllPreviews);
 
-    if (restore()) {
-      ARMS.forEach(buildReviewForm);
-      pkgStatus("保存済みのパッケージを復元しました: " + db.pkg.experiment.experimentId
-        + "（" + db.pkg.cases.length + " 件）");
-      startWorkbench();
-    } else {
-      pkgStatus("");
-      render();
-    }
+    bootstrapWorkspaces();
   }
 
   document.addEventListener("persona:view", function (e) {
     if (e && e.detail && e.detail.view === "ab") init();
   });
+
+  // [R4F] 案内付き生成の専用入口。実験固有の情報を持たない汎用の指定で、
+  //  A/B画面を開くだけ(何を始めるかは利用者がその場で選ぶ)。
+  //  この配線はA/B側の init を登録し終えてから行う(先に切り替えると init が走らない)。
+  try {
+    if (/(^|[?&])ab=new-guided(&|$)/.test(String(window.location.search || ""))) {
+      var entryTab = document.getElementById("abTab");
+      if (entryTab) entryTab.click();
+    }
+  } catch (_) { /* 対応しない環境では従来どおり最初の画面のまま */ }
 })();
 </script>
 </body>

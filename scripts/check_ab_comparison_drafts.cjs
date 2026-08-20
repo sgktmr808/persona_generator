@@ -263,7 +263,21 @@ const PRELUDE = `
     n.dispatchEvent(new Event("change", { bubbles: true }));
     await waitS(/画像を .* 枚置きました|登録できませんでした|上限/, "image " + arm + " " + name);
   };
-  const store = () => JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
+  // [R4F] 記録は実験ごとの保管庫にある。索引から「いま開いている保管庫」の鍵を引く。
+  const abWsIndex = () => {
+    try { return JSON.parse(localStorage.getItem("personaGenerator.abWorkspaces.v1")); }
+    catch (_) { return null; }
+  };
+  const activeWsEntry = () => {
+    const i = abWsIndex();
+    if (!i || !i.activeId) return null;
+    return (i.workspaces || []).filter((w) => w.id === i.activeId)[0] || null;
+  };
+  const abKey = () => {
+    const w = activeWsEntry();
+    return w ? w.storeKey : "personaGenerator.abExperiment.v1";
+  };
+  const store = () => JSON.parse(localStorage.getItem(abKey()));
   const drafts = () => (store().comparisonDrafts || {});
   const selectedId = (arm) => {
     const n = byId("abThumbs" + arm).querySelector('[data-ab-selected="true"]');
@@ -656,9 +670,12 @@ async function main() {
     // comparisonDrafts を持たない従来形の記録へ戻して読み直す
     const counts = await client.send("Runtime.evaluate", {
       expression: `(() => {
-        const raw = JSON.parse(localStorage.getItem("personaGenerator.abExperiment.v1"));
+        const idx = JSON.parse(localStorage.getItem("personaGenerator.abWorkspaces.v1"));
+        const w = (idx.workspaces || []).filter((x) => x.id === idx.activeId)[0];
+        const abKey = () => w.storeKey;
+        const raw = JSON.parse(localStorage.getItem(abKey()));
         delete raw.comparisonDrafts;
-        localStorage.setItem("personaGenerator.abExperiment.v1", JSON.stringify(raw));
+        localStorage.setItem(abKey(), JSON.stringify(raw));
         return { images: raw.images.length, reviews: raw.reviews.length, comparisons: raw.comparisons.length };
       })()`, returnByValue: true
     }, sessionId);

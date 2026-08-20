@@ -128,11 +128,47 @@ check("A/B画面が innerHTML 補間を使わない", (function () {
     .split("\n").map(function (l) { return l.replace(/^\s*\/\/.*$/, ""); }).join("\n");
   return code.indexOf("innerHTML") < 0;
 })());
+// [R4F] 実験の身元は experimentId + definitionSha256 の**両方**で決まり、
+//  同じIDでも定義が違えば別の保管庫になる。記録の削除は入れ替えの手順ではない。
 check("実験定義の同一性を definitionSha256 で判定する",
-  indexHtml.indexOf("definitionSha256") > 0 && indexHtml.indexOf("sameDef") > 0);
-check("定義が変わったら記録を消してから入れ替える",
-  indexHtml.indexOf("resetRecords") > 0
-  && /resetRecords\(\)\.then/.test(indexHtml));
+  indexHtml.indexOf("definitionSha256") > 0
+  && /function workspaceIdFor\(experimentId, definitionSha256\)/.test(indexHtml));
+check("定義が変わっても既存の記録を消さずに別の保管庫を作る",
+  indexHtml.indexOf("adoptPackage") > 0
+  && indexHtml.indexOf("resetRecords") < 0
+  && /別の保管庫を作ります/.test(indexHtml));
+// A/B機能ブロックの実行コード(コメントを外した本文)。説明文に語が出るだけで落とさない。
+const abCode = (function () {
+  let at = indexHtml.indexOf("[R3-FC]");
+  if (at < 0) at = indexHtml.indexOf("[R3-FB]");
+  if (at < 0) return "";
+  return indexHtml.slice(at)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n").map(function (l) { return l.replace(/^\s*\/\/.*$/, ""); }).join("\n");
+})();
+check("A/B機能ブロックを取り出せる", abCode.length > 1000);
+check("保管庫の切り替えでデータベース全体や localStorage 全体を消さない",
+  !/localStorage\.clear\(/.test(abCode)
+  && !/deleteDatabase\(/.test(abCode)
+  && abCode.indexOf("deleteWorkspaceBlobs") > 0
+  && !/objectStore\(IMAGE_STORE\)\.clear\(\)/.test(abCode));
+check("移行前の単一保管庫を消さずに残す",
+  abCode.indexOf("LEGACY_STORE_KEY") > 0
+  && !/removeItem\(LEGACY_STORE_KEY\)/.test(abCode)
+  && abCode.indexOf("legacyMigratedAt") > 0);
+check("案内付き専用の入口が汎用の指定である（実験名を含まない）",
+  indexHtml.indexOf("ab=new-guided") > 0
+  && indexHtml.indexOf("new-guided") > 0);
+check("案内付き生成中は身元と1手順だけを出す（隠した操作は無効化する）",
+  indexHtml.indexOf('id="abIdentity"') > 0
+  && indexHtml.indexOf("GUIDED_LOCK_IDS") > 0
+  && indexHtml.indexOf("lockSubtree") > 0);
+check("開始確認を通るまで作業台を開かない",
+  indexHtml.indexOf('id="abConfirmStart"') > 0
+  && indexHtml.indexOf("confirmedAt") > 0);
+check("登録の直前に登録先の身元を照合する",
+  indexHtml.indexOf("registrationGuard") > 0
+  && indexHtml.indexOf("guidedTargetToken") > 0);
 check("R3-FB の保存形式を維持している",
   indexHtml.indexOf("adoptionDecision") > 0
   && indexHtml.indexOf("controlImageId") > 0 && indexHtml.indexOf("treatmentImageId") > 0
