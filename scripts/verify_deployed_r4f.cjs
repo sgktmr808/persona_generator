@@ -350,6 +350,47 @@ function phaseGuidedRun(arg) {
   })(__ARG__);
 }
 
+function phaseEnterGeneration(arg) {
+  return (async (a) => {
+    __PRELUDE__
+    window.confirm = () => true;
+    await waitFor(() => byId("abWorkspaces").hidden === false, "selection screen");
+    loadPkg(a.pkg, "deployed-layout.json");
+    // 未確認の保管庫なら開始確認を通る。確認済みの保管庫はそのまま作業台へ戻る。
+    await waitFor(() => byId("abConfirm").hidden === false || byId("abWorkbench").hidden === false,
+      "confirm or workbench for layout");
+    if (byId("abConfirm").hidden === false) {
+      byId("abConfirmStart").click();
+      await waitFor(() => byId("abWorkbench").hidden === false, "workbench for layout");
+    }
+    const before = (store().images || []).length;
+    const input = byId("abGuidedFile");
+    input.files = await oneFile("layout.png", 5150);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await waitFor(() => (store().images || []).length === before + 1, "one image for layout");
+    await delay(250);
+    note(/生成中/.test(byId("abGuidedPhase").textContent), "生成中でない: " + byId("abGuidedPhase").textContent);
+    return { pass: problems.length === 0, problems, guidedId: activeWs().id };
+  })(__ARG__);
+}
+function phaseDropGuided(arg) {
+  return (async (a) => {
+    __PRELUDE__
+    window.confirm = () => true;
+    if (byId("abWorkspaces").hidden !== false) byId("abSwitchExperiment").click();
+    await waitFor(() => byId("abWorkspaces").hidden === false, "selection screen");
+    byId("abWsDanger").open = true;
+    await delay(150);
+    const target = byId("abWsDangerList").querySelector('[data-ab-delete="' + a.guidedId + '"]');
+    if (!target) { note(!wsOf(a.guidedId), "削除対象が一覧に無い"); return { pass: problems.length === 0, problems }; }
+    target.click();
+    // 開いていた保管庫でも、そうでなくても「索引から消えた」ことで判定する。
+    await waitFor(() => !wsOf(a.guidedId), "guided workspace dropped");
+    note(!!wsOf(a.staleId), "旧実験まで消えた");
+    await delay(150);
+    return { pass: problems.length === 0, problems };
+  })(__ARG__);
+}
 function phaseLayout(spec) {
   return (async (a) => {
     __PRELUDE__
@@ -368,7 +409,8 @@ function phaseLayout(spec) {
       const r = n.getBoundingClientRect();
       note(r.height >= 44, a.label + " の " + (n.id || n.className) + " が44px未満: " + Math.round(r.height));
     });
-    return { pass: problems.length === 0, problems, label: a.label, overflow, vw: de.clientWidth };
+    return { pass: problems.length === 0, problems, label: a.label, overflow, vw: de.clientWidth,
+      copies: liveCopyControls().length, inputs: liveImageInputs().length };
   })(__ARG__);
 }
 
@@ -460,12 +502,22 @@ async function main() {
       { label: "iPhone 430", width: 430, height: 932, deviceScaleFactor: 3, mobile: true },
       { label: "landscape 844x390", width: 844, height: 390, deviceScaleFactor: 3, mobile: true }
     ];
+    // レイアウト測定は毎回まっさらな案内付き保管庫で行う。
+    await goto(cleanUrl, 2600);
+    await run(phaseDropGuided, "drop the guided workspace before the layout matrix",
+      { guidedId: guided.guidedId, staleId: migrated.staleId }, 120000);
     const layout = [];
     for (const spec of specs) {
       await client.send("Emulation.setDeviceMetricsOverride", spec, sessionId);
       await goto(cleanUrl, 2600);
       layout.push(await run(phaseLayout, "deployed layout / " + spec.label + " / select",
         { label: spec.label + " select" }, 90000));
+      const gen = await run(phaseEnterGeneration, "deployed generation screen / " + spec.label,
+        { pkg: guidedPkg }, 150000);
+      layout.push(await run(phaseLayout, "deployed layout / " + spec.label + " / generation",
+        { label: spec.label + " generation" }, 90000));
+      await run(phaseDropGuided, "drop the guided workspace / " + spec.label,
+        { guidedId: gen.guidedId, staleId: migrated.staleId }, 120000);
     }
 
     console.log("R4F DEPLOYED VERIFICATION PASSED");
@@ -473,7 +525,11 @@ async function main() {
     console.log(`  pre-R4F singleton with ${seeded.blobs} blobs migrated on the deployed page; records and blobs unchanged; resumed experiment named on screen`);
     console.log(`  ?ab=new-guided: ${clean.copies} visible enabled copy controls / ${clean.inputs} visible enabled image inputs; active workspace and blobs untouched`);
     console.log(`  guided run: exactly 1 copy control + 1 file input, one image registered, then ${guided.staleBlobs} legacy blobs still readable after switching back`);
-    console.log(`  layout: ${layout.map((l) => `${l.label} ${l.vw}px overflow ${l.overflow}px`).join(" | ")}`);
+    console.log(`  layout (${layout.length} passes): ${layout.map((l) => `${l.label} ${l.vw}px overflow ${l.overflow}px`).join(" | ")}`);
+    const genLayouts = layout.filter((l) => /generation/.test(l.label));
+    console.log(`  deployed generation-screen control counts per viewport: ${genLayouts.map((l) => l.copies + "/" + l.inputs).join(" ")}`);
+    const bad = genLayouts.filter((l) => l.copies !== 1 || l.inputs !== 1);
+    if (bad.length) fail("deployed generation screen control counts are not 1/1", bad);
   } finally {
     stopHeartbeat();
     if (client) client.close();
