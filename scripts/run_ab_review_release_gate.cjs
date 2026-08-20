@@ -142,6 +142,10 @@ function headlessSnapshot() {
     const ps = execSync("ps -Ao pid=,command=", { encoding: "utf8" });
     ps.split("\n").forEach((line) => {
       if (line.indexOf("--headless") < 0) return;
+      // この検査群が起こす Chrome の目印。ポートは必ず 0（自動割り当て）で、
+      // プロファイルは使い捨ての一時ディレクトリ。ほかの用途の headless Chrome
+      // （別プロジェクトが固定ポートで起こしたものなど）を巻き込まない。
+      if (line.indexOf("--remote-debugging-port=0") < 0) return;
       if (!/--user-data-dir=(\/var\/folders|\/tmp)/.test(line)) return;
       const pid = line.trim().split(/\s+/)[0];
       if (pid) out.set(pid, line.trim().slice(0, 160));
