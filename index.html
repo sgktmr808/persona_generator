@@ -1006,8 +1006,8 @@
           </div>
           <div id="abDiffA" class="sub ab-diff"></div>
           <div class="row">
-            <button id="abCopyA" class="grow primary" type="button">本文をコピー</button>
-            <button id="abCopySettingsA" class="grow" type="button">生成設定をコピー</button>
+            <button id="abCopyA" class="grow primary" type="button" aria-live="polite" aria-atomic="true">本文をコピー</button>
+            <button id="abCopySettingsA" class="grow" type="button" aria-live="polite" aria-atomic="true">生成設定をコピー</button>
           </div>
           <details class="ab-body">
             <summary class="sub">本文を見る</summary>
@@ -1042,8 +1042,8 @@
           </div>
           <div id="abDiffB" class="sub ab-diff"></div>
           <div class="row">
-            <button id="abCopyB" class="grow primary" type="button">本文をコピー</button>
-            <button id="abCopySettingsB" class="grow" type="button">生成設定をコピー</button>
+            <button id="abCopyB" class="grow primary" type="button" aria-live="polite" aria-atomic="true">本文をコピー</button>
+            <button id="abCopySettingsB" class="grow" type="button" aria-live="polite" aria-atomic="true">生成設定をコピー</button>
           </div>
           <details class="ab-body">
             <summary class="sub">本文を見る</summary>
@@ -5996,16 +5996,84 @@
     status(arm + "の追加画像 " + next.rank + "枚目を表示しました。");
   }
 
-  function copyText(text, label) {
-    if (!text) { status("コピーする内容がありません。"); return; }
+  // コピー結果は画面下部だけに出さない。押した場所を見ている利用者へ、そのボタン
+  // 自身で「受付・成功・失敗」を返す。iPhone の長い画面でも結果を探させない。
+  function copyButtonState(button, state) {
+    if (!button) return;
+    if (button._copyTimer) { clearTimeout(button._copyTimer); button._copyTimer = null; }
+    if (!button.getAttribute("data-copy-label")) {
+      button.setAttribute("data-copy-label", button.textContent);
+    }
+    var original = button.getAttribute("data-copy-label");
+    button.classList.remove("flash-ok", "flash-err");
+    button.setAttribute("data-copy-state", state);
+    if (state === "copying") {
+      button.textContent = "コピー中…";
+      return;
+    }
+    if (state === "success") {
+      button.textContent = "✓ コピーしました";
+      button.classList.add("flash-ok");
+      button._copyTimer = setTimeout(function () {
+        button.textContent = original;
+        button.classList.remove("flash-ok", "flash-err");
+        button.setAttribute("data-copy-state", "idle");
+        button._copyTimer = null;
+      }, 2000);
+      return;
+    }
+    if (state === "empty") {
+      button.textContent = "コピーする内容がありません";
+    } else {
+      button.textContent = "コピーできません・再試行";
+    }
+    button.classList.add("flash-err");
+  }
+
+  function legacyCopyText(text) {
+    if (typeof document.execCommand !== "function") return false;
+    var box = document.createElement("textarea");
+    box.value = text;
+    box.setAttribute("readonly", "readonly");
+    box.style.position = "fixed";
+    box.style.left = "-9999px";
+    box.style.top = "0";
+    document.body.appendChild(box);
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function () { status(label + "をコピーしました。"); },
-          function () { status("コピーできませんでした。欄から手動で選択してください。"); });
-        return;
-      }
-    } catch (_) { /* clipboard が無い環境は下の案内へ */ }
-    status("この環境では自動コピーができません。欄から手動で選択してください。");
+      box.focus({ preventScroll: true });
+      box.setSelectionRange(0, box.value.length);
+      return document.execCommand("copy") === true;
+    } catch (_) {
+      return false;
+    } finally {
+      box.remove();
+    }
+  }
+
+  function copyText(text, label, button) {
+    if (!text) {
+      copyButtonState(button, "empty");
+      status("コピーする内容がありません。");
+      return;
+    }
+    copyButtonState(button, "copying");
+    function done() {
+      copyButtonState(button, "success");
+      status(label + "をコピーしました。");
+    }
+    function failed() {
+      if (legacyCopyText(text)) { done(); return; }
+      copyButtonState(button, "error");
+      status("コピーできませんでした。同じボタンでもう一度試してください。");
+    }
+    var api = null;
+    try { api = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard : null; }
+    catch (_) { api = null; }
+    if (!api) { failed(); return; }
+    var result = null;
+    try { result = api.writeText(text); } catch (_) { failed(); return; }
+    if (!result || typeof result.then !== "function") { failed(); return; }
+    result.then(done, failed);
   }
 
   // [R4E] iPhone でも確実にコピーできる経路。自動コピーが使えない/拒否された端末でも
@@ -7008,11 +7076,11 @@
     ARMS.forEach(function (arm) {
       on("abCopy" + arm, "click", function () {
         var c = currentCase();
-        copyText(c ? c.arms[arm].prompt : "", arm + " の本文");
+        copyText(c ? c.arms[arm].prompt : "", arm + " の本文", el("abCopy" + arm));
       });
       on("abCopySettings" + arm, "click", function () {
         var c = currentCase();
-        copyText(c ? c.settingsRaw : "", "生成設定");
+        copyText(c ? c.settingsRaw : "", "生成設定", el("abCopySettings" + arm));
       });
       on("abRemove" + arm, "click", function () { removeImage(arm); });
       on("abNextUnreviewed" + arm, "click", function () { selectNextUnreviewed(arm); });

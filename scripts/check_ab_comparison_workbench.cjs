@@ -429,11 +429,36 @@ function phaseLoad(pkg) {
     let copied = null;
     navigator.clipboard.writeText = (t) => { copied = t; return Promise.resolve(); };
     byId("abCopyA").click();
-    await waitS(/コピーしました/, "copy A");
+    note(byId("abCopyA").textContent === "コピー中…", "A本文の押下直後に受付がボタンへ出ない");
+    await waitFor(() => byId("abCopyA").getAttribute("data-copy-state") === "success", "copy A button feedback");
+    note(byId("abCopyA").textContent === "✓ コピーしました", "A本文の成功が押したボタンに出ない");
+    note(byId("abCopyA").classList.contains("flash-ok"), "A本文の成功表示が視覚的に区別できない");
     note(copied === c0.arms.A.prompt, "コピーした本文が元と違う");
     byId("abCopySettingsA").click();
-    await waitS(/コピーしました/, "copy settings");
+    note(byId("abCopySettingsA").textContent === "コピー中…", "生成設定の押下直後に受付がボタンへ出ない");
+    await waitFor(() => byId("abCopySettingsA").getAttribute("data-copy-state") === "success", "copy settings button feedback");
+    note(byId("abCopySettingsA").textContent === "✓ コピーしました", "生成設定の成功が押したボタンに出ない");
     note(copied === c0.settingsRaw, "コピーした生成設定が元と違う");
+
+    // 失敗も画面下部だけへ逃がさず、同じボタンに残して再試行できる。
+    const originalExecCommand = document.execCommand;
+    document.execCommand = () => false;
+    navigator.clipboard.writeText = () => Promise.reject(new Error("clipboard refused"));
+    byId("abCopyB").click();
+    await waitFor(() => byId("abCopyB").getAttribute("data-copy-state") === "error", "copy B error feedback");
+    note(byId("abCopyB").textContent === "コピーできません・再試行", "コピー失敗が押したボタンに出ない");
+    note(byId("abCopyB").classList.contains("flash-err"), "コピー失敗表示が視覚的に区別できない");
+    navigator.clipboard.writeText = (t) => { copied = t; return Promise.resolve(); };
+    byId("abCopyB").click();
+    note(byId("abCopyB").textContent === "コピー中…", "再試行の受付が同じボタンに出ない");
+    await waitFor(() => byId("abCopyB").getAttribute("data-copy-state") === "success", "copy B retry success");
+    note(copied === c0.arms.B.prompt, "再試行でコピーしたB本文が元と違う");
+    document.execCommand = originalExecCommand;
+
+    await delay(2100);
+    note(byId("abCopyA").textContent === "本文をコピー", "成功表示後にA本文ボタンが元へ戻らない");
+    note(byId("abCopySettingsA").textContent === "生成設定をコピー", "成功表示後に生成設定ボタンが元へ戻らない");
+    note(byId("abCopyB").textContent === "本文をコピー", "成功表示後にB本文ボタンが元へ戻らない");
 
     return { pass: problems.length === 0, problems,
       cases: byId("abCaseSelect") ? -1 : pkgArg.cases.length,
@@ -938,6 +963,24 @@ function phaseMobile(spec) {
       const r = byId(id).getBoundingClientRect();
       note(r.width > 0 && r.height >= 44, label + " の " + id + " が44px未満: " + JSON.stringify({ w: r.width, h: r.height }));
     });
+    // 押した場所で成功が読めることを各iPhone幅でも確認する。成功文言による横崩れも拒否する。
+    const beforeCopyY = window.scrollY;
+    byId("abCopyA").scrollIntoView({ block: "center" });
+    await delay(80);
+    if (!navigator.clipboard) {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {} });
+    }
+    navigator.clipboard.writeText = () => Promise.resolve();
+    byId("abCopyA").click();
+    note(byId("abCopyA").textContent === "コピー中…", label + " でコピー受付がボタンに出ない");
+    await waitFor(() => byId("abCopyA").getAttribute("data-copy-state") === "success", label + " copy feedback");
+    note(byId("abCopyA").textContent === "✓ コピーしました", label + " で成功が押したボタンに出ない");
+    const successRect = byId("abCopyA").getBoundingClientRect();
+    note(successRect.top >= 0 && successRect.bottom <= window.innerHeight,
+      label + " で成功表示が画面内に見えない: " + JSON.stringify({ top: successRect.top, bottom: successRect.bottom }));
+    note(Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 1,
+      label + " で成功文言により横溢れしている");
+    window.scrollTo(0, beforeCopyY);
     ["abProvider", "abModel", "abSeedSupport", "abSeed"].forEach((id) => {
       const fontSize = parseFloat(getComputedStyle(byId(id)).fontSize);
       note(fontSize >= 16, label + " の " + id + " がiOSズームを招く文字サイズ: " + fontSize + "px");
