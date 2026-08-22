@@ -169,6 +169,26 @@ check("開始確認を通るまで作業台を開かない",
 check("登録の直前に登録先の身元を照合する",
   indexHtml.indexOf("registrationGuard") > 0
   && indexHtml.indexOf("guidedTargetToken") > 0);
+// [R5B] 狙いとの一致は「器」だけを持つ。設問文も選択肢もパッケージから読む。
+check("狙いとの一致の器がある",
+  indexHtml.indexOf("opticalIntentAlignmentRequired") > 0
+  && indexHtml.indexOf("opticalIntentAlignmentStatuses") > 0
+  && indexHtml.indexOf("syncOpticalIntentForm") > 0);
+check("設問文と選択肢を出荷物へ埋め込まない",
+  // 既定文は実験に依存しない一般文だけ。実験の分類名・語彙は持たない。
+  !/aligned|too_sharp|too_soft_or_dissolved|wrong_focus_plane/.test(indexHtml)
+  && indexHtml.indexOf("opticalIntentAlignmentQuestion") > 0);
+check("3段階の合焦入力と同時には使えない",
+  /focusRubricRequired と同時には使えない/.test(indexHtml));
+check("宣言したパッケージの記録にだけ足す",
+  /if \(opticalIntentRequired\(\) && String\(input\.opticalIntent/.test(indexHtml)
+  && /if \(e\.opticalIntentAlignment\) out\.opticalIntentAlignment/.test(indexHtml));
+check("未評価のまま書き出させない",
+  indexHtml.indexOf("unevaluatedImages") > 0
+  && /すべて評価するまで書き出せません/.test(indexHtml));
+check("失敗分類の短文はパッケージから読む（出荷物へ実験の分類名を埋め込まない）",
+  indexHtml.indexOf("failureCodeLabels") > 0
+  && !/subject_missing/.test(indexHtml));
 check("R3-FB の保存形式を維持している",
   indexHtml.indexOf("adoptionDecision") > 0
   && indexHtml.indexOf("controlImageId") > 0 && indexHtml.indexOf("treatmentImageId") > 0

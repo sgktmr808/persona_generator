@@ -35,6 +35,8 @@ const CHECKS = [
     baselineMs: 51700, timeoutMs: 210000 },
   { file: "check_ab_guided_generation.cjs", marker: "R4E GUIDED WORKFLOW BROWSER ACCEPTANCE PASSED",
     baselineMs: 47400, timeoutMs: 190000 },
+  { file: "check_ab_optical_intent.cjs", marker: "R5B OPTICAL INTENT BROWSER ACCEPTANCE PASSED",
+    baselineMs: 46300, timeoutMs: 190000 },
   { file: "check_ab_resample_plan.cjs", marker: "R3-FG RESAMPLE PLAN BROWSER ACCEPTANCE PASSED",
     baselineMs: 64000, timeoutMs: 260000 },
   { file: "check_ab_comparison_drafts.cjs", marker: "R3-FE COMPARISON DRAFT BROWSER ACCEPTANCE PASSED",

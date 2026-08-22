@@ -670,20 +670,38 @@ function phaseReloadSaveExport() {
     setVal("abCompareNotes", "合成の比較コメント");
     await saveCase("focus case 1", 4);
 
+    // [R5B] ケース2には合焦入力だけ入れた画像が1枚ある(判定も点数も空)。
+    //  未評価の画像が1枚でも登録されている間は、書き出し自体を断る。
+    //  以前はここで「下書きは空欄のまま書き出される」ことを確かめていたが、
+    //  空欄のまま提出物へ出る経路そのものを塞ぐ方が契約(UI品質契約 §9)に沿う。
+    byId("abStatus").textContent = "";
+    byId("abExportReviews").click();
+    await delay(400);
+    note(/未評価の画像が 1 枚あります/.test(st()),
+      "未評価の画像があるのに書き出しが通った: " + st());
+    note(/すべて評価するまで書き出せません/.test(st()), "書き出せない理由が出ていない: " + st());
+
+    // その画像を外すと、残るのは保存済みのケース1だけになる。
+    byId("abNext").click();
+    await waitFor(() => /ケース 2 \/ 2/.test(byId("abCaseCounter").textContent), "case 2 to clean up");
+    await delay(250);
+    window.confirm = () => true;
+    byId("abStatus").textContent = "";
+    byId("abRemoveA").click();
+    await waitS(/画像を外しました/, "case 2 image removed");
+    byId("abPrev").click();
+    await waitFor(() => /ケース 1 \/ 2/.test(byId("abCaseCounter").textContent), "back to case 1");
+    await delay(250);
+
     const rows = await exportRows("abExportReviews");
     const flat = [];
     rows.forEach((r) => r.images.forEach((im) => flat.push({ row: r, im })));
-    // ケース1の4枚は保存済み。ケース2に1枚だけ置いた画像は未保存の下書きなので、
-    // 「未完成の記録が完成として書き出されない」ことをここで確かめる。
     const case1 = flat.filter((x) => x.row.experiment.sourceNo === 1);
     const case2 = flat.filter((x) => x.row.experiment.sourceNo === 2);
     note(case1.length === 4, "ケース1の書き出し画像数が4でない: " + case1.length);
     note(case1.every((x) => x.im.evaluation.focusAssessment),
       "保存済みケース1に focusAssessment の無い画像がある");
-    note(case2.every((x) => !x.im.evaluation.focusAssessment),
-      "未保存の下書きが focusAssessment 付きで書き出されている");
-    note(case2.every((x) => !x.im.evaluation.verdict),
-      "未保存の下書きが判定付きで書き出されている");
+    note(case2.length === 0, "外したはずのケース2の画像が書き出しに残っている: " + case2.length);
     const withFocus = case1;
     note(withFocus.length === 4, "focusAssessment を持つ評価が4でない: " + withFocus.length);
     const derivedSeen = {};

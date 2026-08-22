@@ -376,6 +376,17 @@ const PRELUDE = `
     if (notes !== undefined) setVal("abRev" + arm + "_notes", notes);
   };
   // 優先項目は行のデータ属性から引く(画面にはIDもハッシュも出さないため)。
+  // 表示中の画像の評価をひと通り埋める(判定・点数・優先項目)。
+  const fillReview = (arm) => {
+    setVal("abRev" + arm + "_verdict", "hold");
+    setVal("abRev" + arm + "_aestheticSatisfaction", "3");
+    setVal("abRev" + arm + "_intentMatch", "3");
+    Array.prototype.slice.call(byId("abRev" + arm + "_priority").querySelectorAll("select"))
+      .forEach((sel) => {
+        sel.value = "present";
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+  };
   const prioRows = (arm) => Array.prototype.slice.call(
     byId("abRev" + arm + "_priority").querySelectorAll("[data-ab-priority-id]"));
   const setPrio = (arm, itemId, status) => {
@@ -710,6 +721,17 @@ function phaseReloadSaveExport(arg) {
 
     // 9-11. 書き出し
     await waitFor(() => /ケース 2 \/ 2/.test(byId("abCaseCounter").textContent), "advanced");
+    // [R5B] ケース2には手順5で置いた未評価の画像が1枚ある。未評価の画像が登録されている
+    //  間は書き出しを断る(UI品質契約 §9)。ここでは外してから書き出す。
+    byId("abStatus").textContent = "";
+    byId("abExportReviews").click();
+    await delay(400);
+    note(/未評価の画像が 1 枚あります/.test(st()),
+      "未評価の画像があるのに書き出しが通った: " + st());
+    // 評価を埋めてから書き出す。外す方法は取れない: 無効化した画像も上限枚数に数えられるため、
+    // 後段で2枚へ戻せなくなる。
+    fillReview("A");
+    await delay(250);
     const rows = await exportRows("abExportReviews");
     const c1 = rows.filter((r) => r.experiment.sourceNo === 1);
     note(c1.length === 2, "ケース1のレビュー行が2本でない: " + c1.length);
@@ -950,6 +972,9 @@ async function main() {
         __PRELUDE__
         byId("abPrev").click();
         await waitFor(() => /ケース 1 \/ 2/.test(byId("abCaseCounter").textContent), "case 1");
+        byId("abThumbsA").querySelectorAll("img")[0].click();
+        byId("abThumbsB").querySelectorAll("img")[0].click();
+        await delay(300);
         await waitFor(() => byId("abBigA").hidden === false && byId("abBigB").hidden === false, "both previews");
         return { pass: problems.length === 0, problems };
       })();
@@ -979,13 +1004,29 @@ async function main() {
         __PRELUDE__
         byId("abNext").click();
         await waitFor(() => /ケース 2 \/ 2/.test(byId("abCaseCounter").textContent), "case 2");
-        if (byId("abThumbsA").querySelectorAll("img").length < 2) {
-          await pickImage("A", "c2-a2.png", 52);
+        // 左右の枚数を必ず2枚ずつへ揃える。片側だけ1枚だと、未評価画像の案内が片方にしか
+        // 出ず、A/B の整列検査が「実装の崩れ」ではなく前提の違いで落ちる。
+        let seed = 52;
+        while (byId("abThumbsA").querySelectorAll("img").length < 2) {
+          await pickImage("A", "c2-a" + seed + ".png", seed); seed += 1;
         }
-        if (byId("abThumbsB").querySelectorAll("img").length < 2) {
-          await pickImage("B", "c2-b1.png", 53);
-          await pickImage("B", "c2-b2.png", 54);
+        while (byId("abThumbsB").querySelectorAll("img").length < 2) {
+          await pickImage("B", "c2-b" + seed + ".png", seed); seed += 1;
         }
+        // 左右を同じ状態へ揃える。片方だけ未評価が残ると「未評価画像へ」の案内が片方にしか
+        // 出ず、整列の実測が実装の崩れではなく前提の違いで動く。
+        for (const arm of ["A", "B"]) {
+          const list = byId("abThumbs" + arm).querySelectorAll("img");
+          for (let i = 0; i < list.length; i += 1) {
+            byId("abThumbs" + arm).querySelectorAll("img")[i].click();
+            await delay(200);
+            fillReview(arm);
+            await delay(150);
+          }
+        }
+        byId("abThumbsA").querySelectorAll("img")[0].click();
+        byId("abThumbsB").querySelectorAll("img")[0].click();
+        await delay(300);
         await waitFor(() => byId("abBigA").hidden === false && byId("abBigB").hidden === false, "both previews");
         note(prioRows("A").length === 5 && prioRows("B").length === 5,
           "ケース2の項目数が5でない: " + prioRows("A").length + "/" + prioRows("B").length);
