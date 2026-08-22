@@ -3403,8 +3403,22 @@
   // 評価・比較の正規化。解析側と**同じ並び・同じ文字列化**で組む。
   //  ここがずれると「変わっていないのに拒否」「変わったのに受理」の両方が起きる。
   //  可変値(reviewId の時刻・comparisonId・supersedes・書き出し時刻)は入れない。
-  function normalizedEvaluationOf(image) {
+  var OPTICAL_ANALYSIS_SCHEMA = "optical-target-materialization.submission-analysis.v1";
+  function normalizedEvaluationOf(image, reportSchemaVersion) {
     var e = (image && image.evaluation) || {};
+    // OP-E1 の解析器が初回レポートへ封入した順序・対象項目と完全に同じ形。
+    // priorityChecks は初回解析の封印対象に含まれないため、ここへ混ぜると
+    // 変更が無くても全画像の SHA-256 が不一致になる。
+    if (reportSchemaVersion === OPTICAL_ANALYSIS_SCHEMA) {
+      return {
+        verdict: String(e.verdict || ""),
+        aestheticSatisfaction: String(e.aestheticSatisfaction || ""),
+        intentMatch: String(e.intentMatch || ""),
+        failures: (e.failures || []).map(String).slice().sort(),
+        focusAssessment: e.focusAssessment || null,
+        notes: String(image && image.notes ? image.notes : "")
+      };
+    }
     var out = {
       verdict: String(e.verdict === undefined || e.verdict === null ? "" : e.verdict),
       aestheticSatisfaction: String(e.aestheticSatisfaction === undefined || e.aestheticSatisfaction === null
@@ -3432,7 +3446,14 @@
     }
     return out;
   }
-  function normalizedComparisonOf(c) {
+  function normalizedComparisonOf(c, reportSchemaVersion) {
+    // OP-E1 解析器の比較スナップショットは preference と notes だけを封印する。
+    if (reportSchemaVersion === OPTICAL_ANALYSIS_SCHEMA) {
+      return {
+        preference: (c && c.preference) || "",
+        notes: (c && c.notes) || ""
+      };
+    }
     return {
       sourceNo: c.sourceNo,
       armGenerationIds: { A: (c.armGenerationIds || {}).A || "", B: (c.armGenerationIds || {}).B || "" },
@@ -3583,7 +3604,7 @@
           errors.push(tag + " 順位 " + im.rank + ": 評価のSHA-256がありません");
           return;
         }
-        evalJobs.push(sha256Text(JSON.stringify(normalizedEvaluationOf(here))).then(function (hex) {
+        evalJobs.push(sha256Text(JSON.stringify(normalizedEvaluationOf(here, report.schemaVersion))).then(function (hex) {
           if (hex === null) return "この環境では評価のSHA-256を計算できません（https でお試しください）";
           if (hex !== im.evaluationSha256) return tag + " 順位 " + im.rank + ": 初回の評価が変わっています";
           return null;
@@ -3631,7 +3652,7 @@
       var was = snapCmpByNo[no];
       var now = currentCmpByNo[no];
       if (!isSha256(was.sha256)) { errors.push("No." + no + ": 比較のSHA-256がありません"); return; }
-      cmpJobs.push(sha256Text(JSON.stringify(normalizedComparisonOf(now))).then(function (hex) {
+      cmpJobs.push(sha256Text(JSON.stringify(normalizedComparisonOf(now, report.schemaVersion))).then(function (hex) {
         if (hex === null) return "この環境では比較のSHA-256を計算できません（https でお試しください）";
         if (hex !== was.sha256) return "No." + no + ": 初回の比較（対象画像・どちらが良いか・コメント）が変わっています";
         return null;

@@ -265,6 +265,23 @@ function normalizedComparison(c) {
 }
 function comparisonSha(c) { return sha(JSON.stringify(normalizedComparison(c))); }
 
+// OP-E1 解析器 v1 が初回提出を封印する正規化。汎用計画より対象項目が狭く、
+// UI は report.schemaVersion を見てこの形式と完全一致させる必要がある。
+function opticalEvaluationSha(image) {
+  const e = (image && image.evaluation) || {};
+  return sha(JSON.stringify({
+    verdict: String(e.verdict || ""),
+    aestheticSatisfaction: String(e.aestheticSatisfaction || ""),
+    intentMatch: String(e.intentMatch || ""),
+    failures: (e.failures || []).map(String).slice().sort(),
+    focusAssessment: e.focusAssessment || null,
+    notes: String(image && image.notes ? image.notes : "")
+  }));
+}
+function opticalComparisonSha(c) {
+  return sha(JSON.stringify({ preference: c.preference || "", notes: c.notes || "" }));
+}
+
 // 初回書き出し(レビューJSONL・比較JSONL)から、解析ツールが出すのと同じ形の計画JSONを組む。
 function buildPlanReport(pkg, reviewRows, comparisonRows, targets) {
   return {
@@ -297,6 +314,24 @@ function buildPlanReport(pkg, reviewRows, comparisonRows, targets) {
       }))
     }
   };
+}
+
+function buildOpticalPlanReport(pkg, reviewRows, comparisonRows, targets) {
+  const report = buildPlanReport(pkg, reviewRows, comparisonRows, targets);
+  report.schemaVersion = "optical-target-materialization.submission-analysis.v1";
+  report.snapshot.reviewRows.forEach((row) => {
+    const source = reviewRows.find((r) => r.experiment.sourceNo === row.sourceNo
+      && r.experiment.arm === row.slot);
+    row.images.forEach((im) => {
+      const image = source.images.find((x) => x.imageId === im.imageId);
+      im.evaluationSha256 = opticalEvaluationSha(image);
+    });
+  });
+  report.snapshot.comparisons.forEach((row) => {
+    const source = comparisonRows.find((c) => c.sourceNo === row.sourceNo);
+    row.sha256 = opticalComparisonSha(source);
+  });
+  return report;
 }
 
 // 「初回の記録が1項目だけ変わっていた」状態を、計画側のハッシュで作る。
@@ -612,7 +647,7 @@ function phaseReject(arg) {
     out_invalidations = store().invalidations.length;
 
     // 正しい計画は受け取る
-    let msg = await load(a.plan, "valid plan");
+    let msg = await load(a.validPlan || a.plan, "valid plan");
     note(/読み込みました/.test(msg), "正しい計画を受け取れなかった: " + msg);
     note(/SHA-256で照合済み/.test(msg), "照合済みだと分かる表示になっていない: " + msg);
     out_refused = refused;
@@ -973,6 +1008,7 @@ async function main() {
       aes: im.evaluation.aestheticSatisfaction, intent: im.evaluation.intentMatch, notes: im.notes
     }))), []);
     const plan = buildPlanReport(pkg, r1.rows, r1.cmp, TARGETS);
+    const opticalPlan = buildOpticalPlanReport(pkg, r1.rows, r1.cmp, TARGETS);
 
     // 初回の記録が1項目だけ変わっていた場合を、計画側のハッシュで再現する。
     const evalChanges = {
@@ -995,7 +1031,7 @@ async function main() {
     };
 
     const rejected = await run(phaseReject, "plan intake refuses mismatched plans",
-      { plan, targets: TARGETS, lockedCount: initial.length, evalChanges, cmpChanges });
+      { plan, validPlan: opticalPlan, targets: TARGETS, lockedCount: initial.length, evalChanges, cmpChanges });
     const frozen = await run(phaseFrozen, "non-target cases stay frozen",
       { nonTarget: nonTargets[0], invalidations: rejected.invalidations });
     const added = await run(phaseAdd, "target cases accept exactly 2 more per arm at ranks 3,4",
