@@ -1018,6 +1018,7 @@ async function main() {
   const server = trackSockets(createServer());
   const baseUrl = await listen(server);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "r3fg-"));
+  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "r3fg-dl-"));
   const chrome = spawn(CHROME_PATH, [
     "--headless=new", "--disable-background-networking", "--disable-default-apps",
     "--disable-extensions", "--disable-gpu", "--disable-sync",
@@ -1029,6 +1030,9 @@ async function main() {
   try {
     const browserWs = await waitForChromeWs(chrome);
     client = new CdpClient(browserWs);
+    await client.send("Browser.setDownloadBehavior", {
+      behavior: "allow", downloadPath: downloadDir
+    });
     const target = await client.send("Target.createTarget", { url: baseUrl + "/" });
     const attached = await client.send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
     const sessionId = attached.sessionId;
@@ -1132,6 +1136,7 @@ async function main() {
     await closeChrome(chrome);
     await closeServer(server);
     await removeDirWithRetry(userDataDir);
+    await removeDirWithRetry(downloadDir);
   }
 }
 

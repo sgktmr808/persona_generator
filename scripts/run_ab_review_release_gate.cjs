@@ -17,6 +17,8 @@
 //    - 終了後に自分が起こしたプロセスが残っていないことを確かめて報告する
 "use strict";
 
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn, execSync } = require("node:child_process");
 
@@ -160,9 +162,27 @@ function strayProcesses(before) {
   return stray;
 }
 
+// ブラウザ検査の合成書き出しを利用者のDownloadsへ混ぜない。各検査は一時保存先へ
+// 固定するが、ゲート自身も開始前後を照合し、将来の検査追加で設定を忘れても公開を止める。
+function downloadArtifactSnapshot() {
+  const dir = path.join(os.homedir(), "Downloads");
+  const out = new Set();
+  try {
+    fs.readdirSync(dir).forEach((name) => {
+      if (/^(fixture-|facial-fusion-ab-)/.test(name)) out.add(name);
+    });
+  } catch (_) { /* Downloads が無い環境では個別検査の一時保存だけで守る */ }
+  return out;
+}
+function newDownloadArtifacts(before) {
+  const after = downloadArtifactSnapshot();
+  return [...after].filter((name) => !before.has(name)).sort();
+}
+
 (async () => {
   const runStarted = Date.now();
   const beforeProcs = headlessSnapshot();
+  const beforeDownloads = downloadArtifactSnapshot();
   console.log("=== A/B レビューUI リリースゲート（逐次実行） ===");
   console.log(`検査 ${CHECKS.length} 本を1本ずつ実行します。並列実行はしません。`);
   console.log(`実測基準の合計: ${secs(EXPECTED_MS)}（目安 ${secs(EXPECTED_MS)} 〜 ${secs(EXPECTED_MS * 1.3)}）`);
@@ -250,6 +270,7 @@ function strayProcesses(before) {
   const passed = results.filter((r) => r.ok).length;
   const slowest = results.slice().sort((a, b) => b.durationMs - a.durationMs)[0];
   const stray = strayProcesses(beforeProcs);
+  const leakedDownloads = newDownloadArtifacts(beforeDownloads);
   console.log("");
   console.log(`合計: ${passed} / ${results.length} PASS   総所要 ${secs(totalMs)}`
     + `（目安 ${secs(EXPECTED_MS)} 〜 ${secs(EXPECTED_MS * 1.3)}）`);
@@ -259,8 +280,14 @@ function strayProcesses(before) {
   console.log(`外部からの停止: ${abortedBy ? abortedBy : "不要"}`);
   console.log(`残存プロセス（実行前後の差分）: ${stray.length ? stray.join(" | ") : "なし"}`
     + `　実行前から居たもの ${beforeProcs.size} 件は対象外`);
+  console.log(`Downloadsへの検査成果物流出: ${leakedDownloads.length ? leakedDownloads.join(" / ") : "なし"}`);
   if (stray.length) {
     console.log("RELEASE GATE FAILED（検査が起こしたプロセスが残っています）");
+    process.exitCode = 1;
+    return;
+  }
+  if (leakedDownloads.length) {
+    console.log("RELEASE GATE FAILED（検査成果物がDownloadsへ生成されました）");
     process.exitCode = 1;
     return;
   }

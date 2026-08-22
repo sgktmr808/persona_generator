@@ -97,12 +97,17 @@ function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function closeChrome(chrome) {
   return new Promise((resolve) => {
-    if (!chrome || chrome.exitCode !== null || chrome.signalCode !== null) { resolve(); return; }
+    const finish = () => {
+      if (chrome && chrome.stderr && !chrome.stderr.destroyed) chrome.stderr.destroy();
+      if (chrome) chrome.unref();
+      resolve();
+    };
+    if (!chrome || chrome.exitCode !== null || chrome.signalCode !== null) { finish(); return; }
     const timeout = setTimeout(() => {
       if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill("SIGKILL");
-      resolve();
+      finish();
     }, 3000);
-    chrome.once("exit", () => { clearTimeout(timeout); resolve(); });
+    chrome.once("exit", () => { clearTimeout(timeout); finish(); });
     chrome.kill("SIGTERM");
   });
 }
@@ -1063,6 +1068,9 @@ async function main() {
   try {
     const browserWs = await waitForChromeWs(chrome);
     client = new CdpClient(browserWs);
+    await client.send("Browser.setDownloadBehavior", {
+      behavior: "allow", downloadPath: downloadDir
+    });
     const target = await client.send("Target.createTarget", { url: baseUrl + "/" });
     const attached = await client.send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
     const sessionId = attached.sessionId;
@@ -1127,8 +1135,10 @@ async function main() {
 
     const legacy = await run(phaseLegacy, "existing PCEXPORT review flow");
 
-    const leftovers = fs.readdirSync(downloadDir).filter((f) => f.indexOf("facial-fusion-ab-") === 0);
-    if (leftovers.length) fail("unexpected downloads landed on disk", leftovers);
+    const isolatedDownloads = fs.readdirSync(downloadDir).filter((f) => f.indexOf("facial-fusion-ab-") === 0);
+    if (isolatedDownloads.length < 3) {
+      fail("export downloads were not captured in the disposable directory", isolatedDownloads);
+    }
 
     console.log("R3-FC COMPARISON WORKBENCH BROWSER ACCEPTANCE PASSED");
     console.log(`  3 tabs intact | package loaded, source recorded once, body collapsed (${loaded.promptBytes}B kept byte-exact on copy)`);
@@ -1144,8 +1154,20 @@ async function main() {
     console.log(`  public maximum covered: ${regressed.maxImages} images (A/B 5 each) retained, gated, saved, and rendered on every viewport`);
     console.log(`  iPhone matrix passed: ${mobileResults.map((m) => `${m.viewportWidth}px overflow ${m.overflow}px/image ${m.bigWidth}px`).join(" | ")}; controls >=44px`);
     console.log(`  existing PCEXPORT flow still saves ${legacy.legacySchema}`);
+    console.log(`  ${isolatedDownloads.length} export downloads stayed in the disposable directory and are removed with it`);
   } finally {
-    if (client) client.close();
+    // Download manager and CDP's WebSocket can keep the test process alive after all
+    // assertions have passed. Stop new downloads, ask Chrome to exit, then close the
+    // transport. Every wait is bounded so cleanup can never hang the release gate.
+    if (client) {
+      try {
+        await client.send("Browser.setDownloadBehavior", { behavior: "deny" });
+      } catch (_) { /* Chrome may already be closing */ }
+      try {
+        await Promise.race([client.send("Browser.close"), wait(1000)]);
+      } catch (_) { /* Browser.close commonly closes CDP before replying */ }
+      client.close();
+    }
     await closeChrome(chrome);
     await closeServer(server);
     await removeDirWithRetry(userDataDir);
