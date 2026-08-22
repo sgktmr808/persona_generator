@@ -30,7 +30,7 @@ const HERE = __dirname;
 // baselineMs は2回のうち**遅い方**を採る。
 const CHECKS = [
   { file: "check_ab_focus_assessment.cjs", marker: "R4B FOCUS ASSESSMENT BROWSER ACCEPTANCE PASSED",
-    baselineMs: 17800, timeoutMs: 110000 },
+    baselineMs: 19000, timeoutMs: 110000 },
   { file: "check_ab_workspace_entry.cjs", marker: "R4F WORKSPACE ENTRY BROWSER ACCEPTANCE PASSED",
     baselineMs: 51700, timeoutMs: 210000 },
   { file: "check_ab_guided_generation.cjs", marker: "R4E GUIDED WORKFLOW BROWSER ACCEPTANCE PASSED",
