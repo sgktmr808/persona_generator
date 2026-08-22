@@ -4101,7 +4101,11 @@
     var v = guidedCheck();
     return "このパッケージの生成手順は使えません: " + errorsText(v.errors);
   }
-  function guidedEnabled() { return !!guidedContract(); }
+  // 初回の案内付き48ステップは、検証済みの追加レビュー計画を読み込んだ時点で役目を終える。
+  // ここで初回案内を動かし続けると、追加対象へ移動した直後に guidedResume が初回の
+  // 評価順へ戻し、対象外ケースを表示してしまう。追加ラウンドでは計画側の対象限定・
+  // 初回データ固定・枚数上限を唯一の操作契約にする。
+  function guidedEnabled() { return !!guidedContract() && !planActive(); }
   function guidedQueue() { var g = guidedContract(); return g ? g.items : []; }
 
   // [R4E] パッケージが凍結した生成条件。案内付きパッケージではこれを**そのまま採用**する。

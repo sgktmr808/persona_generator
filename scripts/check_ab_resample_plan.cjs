@@ -28,6 +28,16 @@ const CHROME_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrom
 const CASE_COUNT = 8;          // 実運用と同じ形（8ケース×A/B各2枚＝32枚）
 const TARGETS = [2, 3, 5, 6];  // 追加対象（4ケース）
 
+// 案内付き初回フローを持つパッケージでも、追加計画が有効になった後は初回案内が
+// 対象ケースを上書きしてはならない。この境界が消えると実運用では追加対象外へ戻る。
+const INDEX_SOURCE = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+if (!/function guidedEnabled\(\) \{ return !!guidedContract\(\) && !planActive\(\); \}/.test(INDEX_SOURCE)) {
+  throw new Error(
+    "追加レビュー計画が有効な間も初回の案内付き生成が動く状態です。" +
+    "追加対象以外へ戻るため受け入れられません。"
+  );
+}
+
 function fail(message, detail) {
   const error = new Error(message);
   if (detail !== undefined) error.detail = detail;
