@@ -240,6 +240,23 @@
   .ab-resample[data-ab-target="false"] { border-color: var(--border); opacity: .9; }
   .ab-resample b { font-weight: 700; }
 
+  /* iPhone では追加計画の帯と4つの移動ボタンを含むヘッダーが画面の半分近くを
+     覆ってしまう。狭い画面では固定せず、評価対象を隠さない。A/B の短い見出しだけを
+     各カード内で固定し、縦に長いフォームでも現在の面を見失わせない。 */
+  @media (max-width: 719px), (max-height: 500px) {
+    .ab-header { position: static; }
+    .ab-side-head {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      margin: -10px -10px 8px;
+      padding: 8px 10px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+      border-radius: 10px 10px 0 0;
+    }
+  }
+
   /* デスクトップは A/B を同じ高さの2列、狭い画面は縦並び。 */
   .ab-work { display: grid; grid-template-columns: 1fr; gap: 12px; }
   @media (min-width: 720px) {
@@ -264,22 +281,68 @@
   .ab-body summary { cursor: pointer; margin: 8px 0 4px; }
   .ab-body textarea { width: 100%; box-sizing: border-box; white-space: pre-wrap; }
 
-  /* 選択したその場で登録する。別の「登録」ボタンは置かない。 */
+  /* 画像追加。見た目だけの label と 1px の input を分離する方式は使わない。
+     iPhone でも実際の file input 自体が44px以上の領域を覆い、タップを直接受ける。 */
   .ab-drop {
     display: block;
-    position: relative;
     margin: 10px 0 6px;
-    padding: 14px 10px;
-    border: 1px dashed var(--border);
+    padding: 10px;
+    border: 1px solid var(--border);
     border-radius: 10px;
-    text-align: center;
-    cursor: pointer;
-    min-height: 44px;
+    min-width: 0;
   }
-  .ab-drop:focus-within { border-color: var(--accent-2); border-style: solid; }
-  .ab-drop[data-ab-over="true"] { border-color: var(--accent-2); border-style: solid; }
-  .ab-drop[aria-disabled="true"] { opacity: .5; cursor: default; }
-  .ab-drop-text { font-size: .9em; opacity: .9; }
+  .ab-drop:focus-within { border-color: var(--accent-2); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 28%, transparent); }
+  .ab-drop[data-ab-over="true"] { border-color: var(--accent-2); }
+  .ab-drop[aria-disabled="true"] { opacity: .72; }
+  .ab-drop-text { display: block; font-size: .94em; font-weight: 700; margin-bottom: 8px; }
+  .ab-file-button-wrap { display: flex; flex-direction: column; gap: 7px; min-height: 52px; }
+  .ab-side-file-input {
+    position: static;
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--accent-2);
+    border-radius: 9px;
+    background: var(--bg-elevated);
+    color: var(--text-dim);
+    opacity: 1;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .ab-side-file-input::file-selector-button,
+  .ab-side-file-input::-webkit-file-upload-button {
+    min-height: 50px;
+    margin: 0 10px 0 0;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent-grad, var(--accent));
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .ab-file-button-face {
+    order: -1;
+    display: block;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+  .ab-side-file-input:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+  .ab-side-file-input:disabled { cursor: default; }
+  .ab-side-file-input:disabled::file-selector-button,
+  .ab-side-file-input:disabled::-webkit-file-upload-button {
+    background: var(--bg-elevated);
+    color: var(--text-dim);
+  }
+  .ab-side-file-input:disabled + .ab-file-button-face {
+    color: var(--text-dim);
+  }
+  .ab-upload-state { margin-top: 7px; font-size: .85em; line-height: 1.45; color: var(--text-dim); }
   /* [R4F] 画像の投入口はキーボードからも辿れるようにする(display:none は
      支援技術からも消えてしまい、「登録先が1つある」ことを確かめられない)。
      見た目は投入口のカードのまま、入力そのものは1pxで隠す。 */
@@ -293,7 +356,20 @@
     white-space: nowrap;
   }
 
-  .ab-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .ab-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .ab-thumb-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 66px;
+    padding: 5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+  }
+  .ab-thumb-choice[data-ab-selected="true"] { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 10%, transparent); }
   .ab-thumb {
     width: 56px; height: 56px; object-fit: cover;
     border: 1px solid var(--border); border-radius: 6px;
@@ -303,6 +379,30 @@
   .ab-thumb[data-ab-reviewed="true"] { border-color: #3f8a68; }
   .ab-thumb[data-ab-selected="true"] { outline: 2px solid var(--accent-2); outline-offset: 1px; }
   .ab-thumb[data-ab-dead="true"] { opacity: .35; }
+  .ab-thumb-kind { font-size: 11px; line-height: 1.25; font-weight: 700; }
+  .ab-thumb-state { font-size: 10px; line-height: 1.2; color: var(--text-dim); }
+
+  .ab-selection-context {
+    margin: 10px 0 6px;
+    padding: 8px 10px;
+    border-left: 4px solid var(--accent-2);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent-2) 9%, transparent);
+    font-size: .92em;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+  .ab-selection-context[data-ab-initial="true"] { border-left-color: var(--border); background: var(--bg-elevated); }
+  .ab-locked-notice {
+    margin: 8px 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: .9em;
+    line-height: 1.5;
+  }
+  .ab-next-unreviewed { width: 100%; min-height: 44px; margin: 4px 0 2px; }
 
   .ab-big-wrap { margin: 6px 0; }
   .ab-big {
@@ -913,15 +1013,22 @@
             <summary class="sub">本文を見る</summary>
             <textarea id="abPromptA" rows="8" readonly aria-label="A の本文"></textarea>
           </details>
-          <label id="abDropA" class="ab-drop" for="abFileA">
-            <span class="ab-drop-text">画像をここへドロップ／タップして選ぶ</span>
-            <input id="abFileA" type="file" accept="image/*" multiple class="ab-drop-input" aria-label="A の画像" />
-          </label>
+          <div id="abDropA" class="ab-drop" aria-disabled="false">
+            <span class="ab-drop-text">Aに追加する画像</span>
+            <div class="ab-file-button-wrap">
+              <input id="abFileA" type="file" accept="image/*" multiple class="ab-side-file-input" aria-label="Aに追加する画像を写真から選ぶ" />
+              <span id="abFileFaceA" class="ab-file-button-face" aria-hidden="true">写真から選ぶ</span>
+            </div>
+            <div id="abUploadStateA" class="ab-upload-state"></div>
+          </div>
           <div id="abThumbsA" class="ab-thumbs"></div>
+          <button id="abNextUnreviewedA" class="ab-next-unreviewed" type="button" hidden>Aの次の未評価追加画像へ</button>
+          <div id="abSelectionA" class="ab-selection-context" hidden></div>
           <figure class="ab-big-wrap">
             <img id="abBigA" class="ab-big" alt="" hidden />
             <figcaption id="abBigCaptionA" class="sub"></figcaption>
           </figure>
+          <div id="abLockedNoticeA" class="ab-locked-notice" hidden></div>
           <div class="row">
             <button id="abRemoveA" class="grow" type="button" hidden>この画像を外す</button>
           </div>
@@ -942,15 +1049,22 @@
             <summary class="sub">本文を見る</summary>
             <textarea id="abPromptB" rows="8" readonly aria-label="B の本文"></textarea>
           </details>
-          <label id="abDropB" class="ab-drop" for="abFileB">
-            <span class="ab-drop-text">画像をここへドロップ／タップして選ぶ</span>
-            <input id="abFileB" type="file" accept="image/*" multiple class="ab-drop-input" aria-label="B の画像" />
-          </label>
+          <div id="abDropB" class="ab-drop" aria-disabled="false">
+            <span class="ab-drop-text">Bに追加する画像</span>
+            <div class="ab-file-button-wrap">
+              <input id="abFileB" type="file" accept="image/*" multiple class="ab-side-file-input" aria-label="Bに追加する画像を写真から選ぶ" />
+              <span id="abFileFaceB" class="ab-file-button-face" aria-hidden="true">写真から選ぶ</span>
+            </div>
+            <div id="abUploadStateB" class="ab-upload-state"></div>
+          </div>
           <div id="abThumbsB" class="ab-thumbs"></div>
+          <button id="abNextUnreviewedB" class="ab-next-unreviewed" type="button" hidden>Bの次の未評価追加画像へ</button>
+          <div id="abSelectionB" class="ab-selection-context" hidden></div>
           <figure class="ab-big-wrap">
             <img id="abBigB" class="ab-big" alt="" hidden />
             <figcaption id="abBigCaptionB" class="sub"></figcaption>
           </figure>
+          <div id="abLockedNoticeB" class="ab-locked-notice" hidden></div>
           <div class="row">
             <button id="abRemoveB" class="grow" type="button" hidden>この画像を外す</button>
           </div>
@@ -5008,23 +5122,45 @@
     var remaining = planRemainingFor(ui.sourceNo, arm);
     var full = frozen || rows.length >= max;
     if (drop) {
+      // 案内モードでは投入口を hidden にする。そこから追加レビュー計画へ切り替えた
+      // ときも同じ DOM を使うため、ここで明示的に表示へ戻さないと「登録は可能だが
+      // iPhone では選択ボタンが存在しない」状態が残る。
+      drop.hidden = false;
       drop.setAttribute("aria-disabled", full ? "true" : "false");
       var t = drop.querySelector(".ab-drop-text");
       if (t) t.textContent = frozen
-        ? "このケースは追加対象ではありません"
+        ? arm + "は追加対象ではありません"
         : full
-          ? (planActive() ? "このラウンドの追加は済んでいます" : "この面はすでに " + max + " 枚です")
-          : (remaining !== null ? ("画像をここへドロップ／タップして選ぶ（あと " + remaining + " 枚）")
-            : "画像をここへドロップ／タップして選ぶ");
+          ? (planActive() ? arm + "の追加は完了しました" : arm + "は画像上限に達しました")
+          : arm + "に追加する画像";
     }
     var input = el("abFile" + arm);
     if (input) input.disabled = full;
+    setText("abFileFace" + arm, full
+      ? (frozen ? "追加できません" : "追加済み " + rows.length + " / " + max + " 枚")
+      : (remaining !== null ? "写真から選ぶ（あと " + remaining + " 枚）" : "写真から選ぶ"));
+    setText("abUploadState" + arm, frozen
+      ? "このケースでは初回画像を確認するだけです。"
+      : full
+        ? (planActive() ? "必要な追加画像がそろいました。" : "これ以上は追加できません。")
+        : (remaining !== null
+          ? "追加画像だけを選んでください。初回画像はそのまま保持されます。"
+          : "選んだ画像はこの端末へすぐ保存されます。"));
 
     var thumbs = el("abThumbs" + arm);
     clear(thumbs);
     allImagesFor(ui.sourceNo, arm).forEach(function (r) {
       var url = previewUrl(r.imageId);
       var dead = isDead(r.imageId);
+      var fromInitialThumb = isPlanLockedImage(r.imageId);
+      var choice = document.createElement("button");
+      choice.type = "button";
+      choice.className = "ab-thumb-choice";
+      choice.setAttribute("data-ab-image-id", r.imageId);
+      choice.setAttribute("data-ab-selected", ui.selected[arm] === r.imageId ? "true" : "false");
+      choice.setAttribute("aria-label", arm + "の" + (fromInitialThumb ? "初回画像" : "追加画像")
+        + r.rank + "枚目" + (dead ? "（無効化済み）" : ""));
+      if (dead) choice.disabled = true;
       var img = document.createElement("img");
       img.className = "ab-thumb";
       if (url) img.src = url;
@@ -5035,14 +5171,43 @@
       if (dead) img.setAttribute("data-ab-dead", "true");
       img.setAttribute("data-ab-reviewed", isReviewed ? "true" : "false");
       if (ui.selected[arm] === r.imageId) img.setAttribute("data-ab-selected", "true");
-      if (!dead) img.addEventListener("click", function () { selectImage(arm, r.imageId); });
-      thumbs.appendChild(img);
+      var kind = document.createElement("span");
+      kind.className = "ab-thumb-kind";
+      kind.textContent = (fromInitialThumb ? "初回 " : "追加 ") + r.rank;
+      var state = document.createElement("span");
+      state.className = "ab-thumb-state";
+      state.textContent = dead ? "対象外" : isReviewed ? "評価済み" : "未評価";
+      if (!dead) choice.addEventListener("click", function () { selectImage(arm, r.imageId); });
+      choice.appendChild(img);
+      choice.appendChild(kind);
+      choice.appendChild(state);
+      thumbs.appendChild(choice);
     });
 
     var big = el("abBig" + arm);
     var cap = el("abBigCaption" + arm);
     var sel = null;
     rows.forEach(function (r) { if (r.imageId === ui.selected[arm]) sel = r; });
+    var fromInitial = !!sel && isPlanLockedImage(sel.imageId);
+    var selectedReady = !!sel && reviewValuesReady(reviewValuesFor(sel.imageId), ui.sourceNo);
+    var selection = el("abSelection" + arm);
+    if (selection) {
+      selection.hidden = !sel;
+      selection.setAttribute("data-ab-initial", fromInitial ? "true" : "false");
+      selection.textContent = !sel ? ""
+        : arm + "・" + (fromInitial ? "初回画像" : (planActive() ? "追加画像" : "登録画像"))
+          + "・" + sel.rank + "枚目　" + (selectedReady ? "評価済み" : "未評価");
+    }
+    var reviewCandidates = planActive() && isPlanTarget(ui.sourceNo)
+      ? planAddedFor(ui.sourceNo, arm) : rows;
+    var unreviewed = reviewCandidates.filter(function (r) {
+      return !reviewValuesReady(reviewValuesFor(r.imageId), ui.sourceNo);
+    });
+    var nextReview = el("abNextUnreviewed" + arm);
+    if (nextReview) {
+      nextReview.hidden = !unreviewed.length || (!!sel && !fromInitial && !selectedReady && unreviewed.length === 1);
+      nextReview.textContent = arm + "の未評価" + (planActive() ? "追加" : "") + "画像へ（残り " + unreviewed.length + "）";
+    }
     var selUrl = sel ? previewUrl(sel.imageId) : null;
     if (big) {
       if (selUrl) { big.src = selUrl; big.alt = arm + " の比較対象画像"; big.hidden = false; }
@@ -5055,10 +5220,16 @@
     }
 
     var host = el("abReview" + arm);
-    if (host) host.style.display = sel ? "" : "none";
-    show("abRemove" + arm, !!sel);
+    if (host) host.style.display = sel && !fromInitial ? "" : "none";
+    show("abRemove" + arm, !!sel && !fromInitial);
+    var lockedNotice = el("abLockedNotice" + arm);
+    if (lockedNotice) {
+      lockedNotice.hidden = !fromInitial;
+      lockedNotice.textContent = fromInitial
+        ? arm + "・初回画像 " + sel.rank + "枚目は評価済みです。追加レビューでは変更しません。"
+        : "";
+    }
     // 初回提出の画像は評価も入力できない。画面上でも触れない状態にする。
-    var fromInitial = !!sel && isPlanLockedImage(sel.imageId);
     if (host) {
       var fields = host.querySelectorAll("select, input, textarea");
       for (var i = 0; i < fields.length; i += 1) fields[i].disabled = fromInitial;
@@ -5802,6 +5973,27 @@
     captureComparisonDraft();
     prefillReview(arm);
     render();
+  }
+
+  // 長いモバイル画面で初回画像の確認欄へ迷い込んでも、追加ラウンドで本当に
+  // 評価すべき画像へ1操作で戻す。対象は追加画像だけで、初回画像へは移動しない。
+  function selectNextUnreviewed(arm) {
+    var rows = planActive() && isPlanTarget(ui.sourceNo)
+      ? planAddedFor(ui.sourceNo, arm) : activeImagesFor(ui.sourceNo, arm);
+    var pending = rows.filter(function (r) {
+      return !reviewValuesReady(reviewValuesFor(r.imageId), ui.sourceNo);
+    });
+    if (!pending.length) {
+      status(arm + "に未評価の追加画像はありません。");
+      return;
+    }
+    var at = -1;
+    pending.forEach(function (r, i) { if (r.imageId === ui.selected[arm]) at = i; });
+    var next = pending[(at + 1) % pending.length];
+    selectImage(arm, next.imageId);
+    var target = el("abSelection" + arm);
+    try { if (target) target.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) { /* noop */ }
+    status(arm + "の追加画像 " + next.rank + "枚目を表示しました。");
   }
 
   function copyText(text, label) {
@@ -6823,6 +7015,7 @@
         copyText(c ? c.settingsRaw : "", "生成設定");
       });
       on("abRemove" + arm, "click", function () { removeImage(arm); });
+      on("abNextUnreviewed" + arm, "click", function () { selectNextUnreviewed(arm); });
       on("abFile" + arm, "change", function (e) {
         var files = e.target.files;
         if (files && files.length) addImages(arm, files);

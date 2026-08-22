@@ -741,6 +741,23 @@ function phaseAdd(arg) {
         "p" + n + " が対象として表示されていない");
 
       await pickImage("A", "r2-p" + n + "-a3.png", n * 100 + 21);
+      // iPhoneで「あと1枚」と表示されるとき、実際の file input 自体が全面を覆い、
+      // 見た目だけの箱ではなく44px以上の直接タップ対象でなければならない。
+      const beforeInputCheckY = window.scrollY;
+      byId("abFileA").scrollIntoView({ block: "center" });
+      await delay(100);
+      const firstInputRect = byId("abFileA").getBoundingClientRect();
+      note(byId("abFileA").disabled === false, "p" + n + " A は残り1枚なのに入力が無効");
+      note(firstInputRect.width >= 200 && firstInputRect.height >= 44,
+        "p" + n + " A の実ファイル入力が直接タップできる大きさでない: "
+          + Math.round(firstInputRect.width) + "x" + Math.round(firstInputRect.height));
+      const hit = document.elementFromPoint(firstInputRect.left + firstInputRect.width / 2,
+        firstInputRect.top + firstInputRect.height / 2);
+      note(hit === byId("abFileA"),
+        "p" + n + " A のボタン中央を別要素が覆っている: " + (hit && (hit.id || hit.className || hit.tagName)));
+      window.scrollTo(0, beforeInputCheckY);
+      note(/あと 1 枚/.test(byId("abFileFaceA").textContent),
+        "p" + n + " A の残り1枚がボタン上に出ていない: " + byId("abFileFaceA").textContent);
       await pickImage("A", "r2-p" + n + "-a4.png", n * 100 + 22);
       await pickImage("B", "r2-p" + n + "-b3.png", n * 100 + 23);
       await pickImage("B", "r2-p" + n + "-b4.png", n * 100 + 24);
@@ -757,6 +774,14 @@ function phaseAdd(arg) {
       await delay(150);
       note(byId("abRevA_notes").value === "初回p" + n + "A1", "p" + n + " の初回評価が変わった: " + byId("abRevA_notes").value);
       note(byId("abRevA_verdict").disabled === true, "p" + n + " の初回評価が編集できる");
+      note(byId("abReviewA").style.display === "none", "p" + n + " の初回画像で巨大な無効フォームが表示される");
+      note(byId("abLockedNoticeA").hidden === false && /A・初回画像 1枚目/.test(byId("abLockedNoticeA").textContent),
+        "p" + n + " の初回画像だと近くに明示されない: " + byId("abLockedNoticeA").textContent);
+      note(/A・初回画像・1枚目/.test(byId("abSelectionA").textContent),
+        "p" + n + " の選択対象にA/初回/順位がない: " + byId("abSelectionA").textContent);
+      const thumbKinds = Array.from(byId("abThumbsA").querySelectorAll(".ab-thumb-kind")).map((x) => x.textContent);
+      note(JSON.stringify(thumbKinds) === '["初回 1","初回 2","追加 3","追加 4"]',
+        "p" + n + " のサムネイル種別が不明: " + JSON.stringify(thumbKinds));
 
       evalImage("A", 2, "hold", 2, 2, "追加p" + n + "A3");
       evalImage("A", 3, "accept", 5, 4, "追加p" + n + "A4");
@@ -951,6 +976,31 @@ function phaseLayout(spec) {
     const rows = nav.map((id) => Math.round(byId(id).getBoundingClientRect().top));
     const sameRow = rows.filter((t) => t === rows[0]).length;
     note(sameRow >= 2, a.label + " でナビゲーションが1つずつ縦積みになっている");
+    if (/iPhone/.test(a.label)) {
+      note(getComputedStyle(byId("abHeader")).position === "static",
+        a.label + " で巨大なヘッダーが固定されたまま");
+      ["A", "B"].forEach((arm) => {
+        const input = byId("abFile" + arm);
+        const r = input.getBoundingClientRect();
+        note(r.width >= 200 && r.height >= 44,
+          a.label + " の " + arm + " ファイル入力が直接タップできない: "
+            + Math.round(r.width) + "x" + Math.round(r.height));
+        note(/初回 1/.test(byId("abThumbs" + arm).textContent)
+          && /追加 3/.test(byId("abThumbs" + arm).textContent),
+          a.label + " の " + arm + " で初回/追加の識別が消えている");
+        note(new RegExp(arm + "・初回画像").test(byId("abSelection" + arm).textContent),
+          a.label + " の " + arm + " 選択画像に面/種別が出ていない: " + byId("abSelection" + arm).textContent);
+      });
+      const bSide = byId("abReviewB").closest("[data-ab-side='B']");
+      const bHead = bSide.querySelector(".ab-side-head");
+      byId("abLockedNoticeB").scrollIntoView({ block: "center" });
+      await delay(150);
+      const headRect = bHead.getBoundingClientRect();
+      note(headRect.top >= -1 && headRect.top <= 2,
+        a.label + " でB評価までスクロールするとB見出しを見失う: top=" + Math.round(headRect.top));
+      note(byId("abHeader").getBoundingClientRect().bottom <= 0,
+        a.label + " で上部ヘッダーがB評価を覆っている");
+    }
     return { pass: problems.length === 0, problems, label: a.label, vw: de.clientWidth, overflow,
       navRows: new Set(rows).size };
   })(__ARG__);
