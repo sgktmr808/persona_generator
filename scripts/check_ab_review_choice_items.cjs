@@ -845,8 +845,19 @@ async function main() {
   const values = REQUIRED_ITEM.options.map((o) => o.value);
   const expectedQueue = choicePkg.experiment.generationExecution.items.map((i) => i.slot + i.rank);
 
-  const server = trackSockets(createServer());
-  const baseUrl = await listen(server);
+  // 公開URLの実受入にも同じ検査を使う。未指定時は従来どおりローカル配信。
+  // 合成パッケージはブラウザ内で読み込ませるだけで、公開リポジトリや外部へ保存しない。
+  const deployedUrl = String(process.env.AB_REVIEW_DEPLOYED_URL || "").trim();
+  let server = null;
+  let baseUrl = "";
+  if (deployedUrl) {
+    const parsed = new URL(deployedUrl);
+    if (parsed.protocol !== "https:") fail("AB_REVIEW_DEPLOYED_URL must use https");
+    baseUrl = deployedUrl.replace(/\/+$/, "");
+  } else {
+    server = trackSockets(createServer());
+    baseUrl = await listen(server);
+  }
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rc-choice-"));
   // 書き出しは使い捨ての保存先へ固定する。利用者の Downloads へ1件も出さない。
   const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "rc-choice-dl-"));
@@ -868,7 +879,8 @@ async function main() {
     const browserWs = await waitForChromeWs(chrome);
     client = new CdpClient(browserWs);
     await client.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir });
-    const target = await client.send("Target.createTarget", { url: baseUrl + "/" });
+    const targetUrl = baseUrl + "/" + (deployedUrl ? "?review-choice-verify=" + Date.now() : "");
+    const target = await client.send("Target.createTarget", { url: targetUrl });
     const attached = await client.send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
     const sessionId = attached.sessionId;
     await client.send("Runtime.enable", {}, sessionId);
