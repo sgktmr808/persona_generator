@@ -687,6 +687,9 @@ function phaseCopyFallback() {
       "コピー検査の起点が違う: " + JSON.stringify(target));
     const want = expectedPrompt(1, "A");
     const box = promptBox();
+    const copyButton = byId("abGuidedCopy");
+    const idleStyle = getComputedStyle(copyButton);
+    const idleBackground = idleStyle.backgroundImage + "|" + idleStyle.backgroundColor;
     note(!!box, "手動コピー用の本文欄が無い");
     note(box.readOnly === true, "本文欄が編集可能になっている");
     note(box.value === want, "本文欄の中身が今の手順の本文と違う");
@@ -702,9 +705,17 @@ function phaseCopyFallback() {
     });
     byId("abGuidedCopy").click();
     await waitFor(() => copied !== null, "clipboard success");
-    await delay(120);
+    await waitFor(() => copyButton.getAttribute("data-copy-state") === "success", "visible copy success");
     note(copied === want, "Clipboard へ渡した本文が今の手順と違う");
     note(/コピーしました/.test(gMsg()), "成功時の案内が出ない: " + gMsg());
+    note(copyButton.textContent === "✓ コピーしました", "成功が押したボタンに明示されない: " + copyButton.textContent);
+    const successStyle = getComputedStyle(copyButton);
+    const successBackground = successStyle.backgroundImage + "|" + successStyle.backgroundColor;
+    note(successBackground !== idleBackground, "成功時の背景が通常状態と同じ");
+    note(successStyle.boxShadow !== "none", "成功時の強調枠・光が無い");
+    await delay(1000);
+    note(copyButton.getAttribute("data-copy-state") === "success",
+      "成功表示が読み取る前に消えた: " + copyButton.getAttribute("data-copy-state"));
     note(!copyHintVisible(), "成功なのに手動コピーの案内が出ている");
 
     // (2) Clipboard API が無い —— 従来コピーも失敗させ、本文欄が開いて全選択される
@@ -712,6 +723,8 @@ function phaseCopyFallback() {
     document.execCommand = () => false;
     byId("abGuidedCopy").click();
     await waitFor(() => copyHintVisible(), "clipboard-absent fallback");
+    note(copyButton.getAttribute("data-copy-state") === "error", "Clipboard不在でボタンが失敗状態にならない");
+    note(/再試行/.test(copyButton.textContent), "Clipboard不在で同じボタンに再試行が出ない");
     note(promptWrapOpen(), "Clipboard 不在で本文欄が開かない");
     note(promptBox().value === want, "Clipboard 不在の本文欄が今の手順と違う");
     note(promptBox().selectionStart === 0 && promptBox().selectionEnd === want.length,
@@ -728,6 +741,8 @@ function phaseCopyFallback() {
     });
     byId("abGuidedCopy").click();
     await waitFor(() => copyHintVisible(), "clipboard-rejected fallback");
+    note(copyButton.getAttribute("data-copy-state") === "error", "Clipboard拒否でボタンが失敗状態にならない");
+    note(/再試行/.test(copyButton.textContent), "Clipboard拒否で同じボタンに再試行が出ない");
     note(promptWrapOpen(), "Clipboard 拒否で本文欄が開かない");
     note(promptBox().selectionEnd === want.length, "Clipboard 拒否で全選択されていない");
     note(promptBox().value === want, "Clipboard 拒否の本文欄が今の手順と違う");
@@ -739,6 +754,41 @@ function phaseCopyFallback() {
     note(imagesOf().length === 1, "コピー検査で画像が増減した: " + imagesOf().length);
     return { pass: problems.length === 0, problems };
   })();
+}
+
+// 任意の目視受入用。合成パッケージだけを使い、iPhone幅で成功・失敗の瞬間を撮る。
+// AB_COPY_FEEDBACK_SCREENSHOT_DIR を指定したときだけ main から呼ぶ。
+function phaseCopyVisual(arg) {
+  return (async (a) => {
+    __PRELUDE__
+    const button = byId("abGuidedCopy");
+    if (!button) return { pass: false, problems: ["guided copy button missing"] };
+    const realExec = document.execCommand;
+    if (a.state === "success") {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: { writeText: () => Promise.resolve() }
+      });
+    } else {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: { writeText: () => Promise.reject(new Error("visual rejection")) }
+      });
+      document.execCommand = () => false;
+    }
+    button.click();
+    await waitFor(() => button.getAttribute("data-copy-state") === a.state,
+      "guided copy visual " + a.state);
+    try { button.scrollIntoView({ block: "center", inline: "nearest" }); } catch (_) {}
+    await delay(160);
+    const style = getComputedStyle(button);
+    const rect = button.getBoundingClientRect();
+    document.execCommand = realExec;
+    return {
+      pass: rect.width > 0 && rect.height >= 44 && style.boxShadow !== "none",
+      problems: [], state: button.getAttribute("data-copy-state"), text: button.textContent,
+      background: style.backgroundImage + "|" + style.backgroundColor,
+      boxShadow: style.boxShadow, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    };
+  })(__ARG__);
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,6 +1286,22 @@ async function main() {
       { label: "landscape 844x390", width: 844, height: 390, deviceScaleFactor: 3, mobile: true }
     ];
     await run(phaseResetForLayout, "reset to generation phase for layout", guidedPkg);
+    const visualDir = process.env.AB_COPY_FEEDBACK_SCREENSHOT_DIR;
+    if (visualDir) {
+      fs.mkdirSync(visualDir, { recursive: true });
+      await client.send("Emulation.setDeviceMetricsOverride",
+        { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }, sessionId);
+      await wait(500);
+      const successVisual = await run(phaseCopyVisual, "copy feedback visual / success", { state: "success" });
+      const successShot = await client.send("Page.captureScreenshot", { format: "png", fromSurface: true }, sessionId);
+      fs.writeFileSync(path.join(visualDir, "guided-copy-success-390.png"), Buffer.from(successShot.data, "base64"));
+      const errorVisual = await run(phaseCopyVisual, "copy feedback visual / error", { state: "error" });
+      const errorShot = await client.send("Page.captureScreenshot", { format: "png", fromSurface: true }, sessionId);
+      fs.writeFileSync(path.join(visualDir, "guided-copy-error-390.png"), Buffer.from(errorShot.data, "base64"));
+      console.log("  copy feedback screenshots: " + visualDir);
+      console.log("    success " + successVisual.text + " / " + successVisual.rect.width + "x" + successVisual.rect.height);
+      console.log("    error   " + errorVisual.text + " / " + errorVisual.rect.width + "x" + errorVisual.rect.height);
+    }
     const layout = [];
     for (const spec of specs) {
       await client.send("Emulation.setDeviceMetricsOverride", spec, sessionId);

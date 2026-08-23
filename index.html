@@ -527,6 +527,37 @@
   .ab-guided-done { margin-top: 12px; }
   .ab-guided-donetext { font-weight: 700; margin-bottom: 8px; line-height: 1.5; }
   #abGuidedCopy, #abGuidedStartReview { min-height: 44px; font-size: 16px; }
+  /* コピーは40回以上繰り返す主要操作。成功を通常のaccent色のまま文字だけで返すと、
+     iPhoneでは変化を見落とす。色・枠・光・文字を同時に変え、押した場所だけで確定を伝える。 */
+  #abGuidedCopy {
+    min-height: 56px; font-size: 17px; font-weight: 800; letter-spacing: 0.01em;
+    border-width: 2px; box-shadow: 0 7px 20px rgba(0,0,0,0.28);
+    transform-origin: center;
+  }
+  #abGuidedCopy[data-copy-state="copying"] {
+    background: linear-gradient(135deg, #59451a, #9a7324) !important;
+    color: #fff8dc !important; border-color: #e8c86c !important;
+    box-shadow: 0 0 0 3px rgba(232,200,108,0.18), 0 8px 24px rgba(0,0,0,0.34);
+  }
+  #abGuidedCopy[data-copy-state="success"] {
+    background: linear-gradient(135deg, #08764a, #18b96f) !important;
+    color: #fff !important; border-color: #86f7bd !important;
+    box-shadow: 0 0 0 4px rgba(68,224,143,0.24), 0 10px 30px rgba(11,156,88,0.42);
+  }
+  #abGuidedCopy[data-copy-state="error"],
+  #abGuidedCopy[data-copy-state="empty"] {
+    background: linear-gradient(135deg, #7a2633, #b43c4e) !important;
+    color: #fff !important; border-color: #ff91a0 !important;
+    box-shadow: 0 0 0 4px rgba(255,92,112,0.20), 0 10px 28px rgba(135,31,48,0.36);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    #abGuidedCopy[data-copy-state="success"] { animation: ab-copy-confirmed 0.34s ease-out; }
+  }
+  @keyframes ab-copy-confirmed {
+    0% { transform: scale(0.985); }
+    55% { transform: scale(1.018); }
+    100% { transform: scale(1); }
+  }
   .ab-guided-drop .ab-drop-text { line-height: 1.5; }
   /* [R4E] Clipboard API が使えない/拒否されたときの手動コピー用の本文欄。
      iPhone の入力ズームを避けるため 16px 以上。編集は不可、横溢れは出さない。 */
@@ -959,7 +990,8 @@
         <div id="abGuidedTarget" class="ab-guided-target"></div>
         <div id="abGuidedCond" class="ab-guided-cond sub"></div>
         <div class="row">
-          <button id="abGuidedCopy" class="grow primary" type="button">この本文をコピー</button>
+          <button id="abGuidedCopy" class="grow primary" type="button" data-copy-state="idle"
+            aria-live="assertive" aria-atomic="true">この本文をコピー</button>
         </div>
         <!-- [R4E] 自動コピーが使えない端末のための読み取り専用の本文欄。
              失敗時は自動で開き、全選択して iPhone の選択メニューからコピーできるようにする。 -->
@@ -6153,7 +6185,7 @@
 
   // コピー結果は画面下部だけに出さない。押した場所を見ている利用者へ、そのボタン
   // 自身で「受付・成功・失敗」を返す。iPhone の長い画面でも結果を探させない。
-  function copyButtonState(button, state) {
+  function copyButtonState(button, state, successHoldMs) {
     if (!button) return;
     if (button._copyTimer) { clearTimeout(button._copyTimer); button._copyTimer = null; }
     if (!button.getAttribute("data-copy-label")) {
@@ -6174,7 +6206,7 @@
         button.classList.remove("flash-ok", "flash-err");
         button.setAttribute("data-copy-state", "idle");
         button._copyTimer = null;
-      }, 2000);
+      }, typeof successHoldMs === "number" ? successHoldMs : 2000);
       return;
     }
     if (state === "empty") {
@@ -6261,15 +6293,23 @@
   function guidedCopyPrompt(item) {
     var text = guidedPromptFor(item);
     var label = item.caseId + "・" + item.slot + "・" + item.rank + "枚目";
+    var button = el("abGuidedCopy");
     var hint = el("abGuidedCopyHint");
     if (hint) { hint.textContent = ""; hint.hidden = true; }
-    if (!text) { guidedMsg("コピーする本文がありません。", true); return; }
+    if (!text) {
+      copyButtonState(button, "empty");
+      guidedMsg("コピーする本文がありません。", true);
+      return;
+    }
+    copyButtonState(button, "copying");
     function done() {
+      copyButtonState(button, "success", 2800);
       guidedMsg("本文をコピーしました（" + label + "）。生成したら下へ登録してください。", false);
       status(label + "の本文をコピーしました。");
     }
     function fallback() {
       if (guidedLegacyCopy()) { done(); return; }
+      copyButtonState(button, "error");
       guidedRevealPrompt("自動コピーができませんでした。下の本文欄はすべて選択済みです。"
         + "選択部分をタップして「コピー」を選んでください。");
       guidedMsg("自動コピーができないため、本文欄を開いて全選択しました（" + label + "）。"
