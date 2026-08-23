@@ -612,6 +612,11 @@ function phaseIncomplete(arg) {
     await selectThumb("B", 5);
     setChoice("B", "fixtureJointState", "");
     await delay(200);
+    const selectedThumb = thumbs("B")[5];
+    note(selectedThumb.getAttribute("data-ab-reviewed") === "false",
+      "必須項目が空なのにサムネイルが評価済みになっている");
+    note(selectedThumb.parentElement.querySelector(".ab-thumb-state").textContent === "未評価",
+      "必須項目が空なのにサムネイル表示が未評価でない");
     note(new RegExp(a.label + "が 1 件").test(flowText()),
       "未入力の残数が画面へ出ていない: " + flowText());
     setVal("abPreference", "tie");
@@ -631,6 +636,10 @@ function phaseIncomplete(arg) {
 
     setChoice("B", "fixtureJointState", a.values[0]);
     await delay(250);
+    note(selectedThumb.getAttribute("data-ab-reviewed") === "true",
+      "必須項目を埋めてもサムネイルが評価済みに変わらない");
+    note(selectedThumb.parentElement.querySelector(".ab-thumb-state").textContent === "評価済み",
+      "必須項目を埋めてもサムネイル表示が評価済みにならない");
     note(!new RegExp(a.label + "が").test(flowText()), "埋めたのに残数が残っている: " + flowText());
     // 任意項目はどこも空のままだが、完了を止めない
     note(getChoice("B", "fixtureOptionalNote") === "", "任意項目に値が入っている");

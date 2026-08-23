@@ -5237,6 +5237,7 @@
       captureReviewDraft(arm);
       markPriorityAnswered(arm);
       renderFlow();
+      syncSelectedReviewThumbState(arm);
     }
     verdict.addEventListener("change", keepDraft);
     (policy.scoreKeys || []).forEach(function (key) {
@@ -5651,7 +5652,7 @@
       img.className = "ab-thumb";
       if (url) img.src = url;
       img.alt = arm + " の画像 " + r.rank + (dead ? "（無効化済み）" : "");
-      var isReviewed = reviewValuesReady(reviewValuesFor(r.imageId));
+      var isReviewed = reviewValuesReady(reviewValuesFor(r.imageId), ui.sourceNo);
       img.title = r.metadata.name + (isReviewed ? "（評価済み）" : "（未評価）");
       img.setAttribute("data-ab-image-id", r.imageId);
       if (dead) img.setAttribute("data-ab-dead", "true");
@@ -5728,6 +5729,24 @@
       removeBtn.disabled = locked;
       removeBtn.textContent = fromInitial ? "この画像は初回提出分（変更できません）"
         : locked ? "この画像は書き出し済み（外せません）" : "この画像を外す";
+    }
+  }
+
+  // 現在の入力が変わった瞬間に、選択中サムネイルの「評価済み／未評価」も同期する。
+  // ケース番号を省略すると、追加必須項目だけ空でも評価済みと誤表示されるため必ず渡す。
+  function syncSelectedReviewThumbState(arm) {
+    var imageId = ui.selected[arm];
+    var host = el("abThumbs" + arm);
+    if (!imageId || !host) return;
+    var ready = reviewValuesReady(reviewValuesFor(imageId), ui.sourceNo);
+    var buttons = host.querySelectorAll(".ab-thumb-choice");
+    for (var i = 0; i < buttons.length; i += 1) {
+      if (buttons[i].getAttribute("data-ab-image-id") !== imageId) continue;
+      var img = buttons[i].querySelector(".ab-thumb");
+      var state = buttons[i].querySelector(".ab-thumb-state");
+      if (img) img.setAttribute("data-ab-reviewed", ready ? "true" : "false");
+      if (state) state.textContent = ready ? "評価済み" : "未評価";
+      break;
     }
   }
 
