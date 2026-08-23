@@ -655,6 +655,30 @@
     margin: 6px 0 0; line-height: 1.5; min-width: 0;
     overflow-wrap: anywhere; white-space: normal;
   }
+  /* 追加のレビュー項目(policy.reviewChoiceItems)。1問1答の単一選択。
+     選択肢の意味をその場に併記するので、行は縦積みにして折返しを許す。 */
+  .ab-choices { margin: 4px 0 12px; min-width: 0; }
+  .ab-choice-note {
+    margin: 2px 0 6px; line-height: 1.5; min-width: 0;
+    overflow-wrap: anywhere; white-space: normal;
+  }
+  .ab-choice-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .ab-choice-option {
+    position: relative; display: flex; align-items: flex-start; gap: 8px;
+    min-height: 44px; box-sizing: border-box; padding: 9px 11px;
+    border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text-dim); font-size: 14px; line-height: 1.5;
+    min-width: 0; cursor: pointer;
+  }
+  .ab-choice-option input { margin: 3px 0 0; flex: 0 0 auto; width: 16px; height: 16px; }
+  .ab-choice-text { display: block; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+  .ab-choice-label { display: block; color: var(--text); font-size: 15px; }
+  .ab-choice-desc { display: block; margin-top: 2px; line-height: 1.5; }
+  /* :has() を持たない環境でも選択が分かるよう、隣接セレクタでも色を変える。 */
+  .ab-choice-option input:checked + .ab-choice-text .ab-choice-label { color: var(--accent-2); }
+  .ab-choice-option:has(input:checked) {
+    border-color: var(--accent); background: rgba(176,32,63,0.14); color: var(--text);
+  }
   .ab-missing { margin-top: 4px; }
   .ab-verdict-card { margin-top: 12px; }
   .ab-caution { margin-top: 8px; opacity: .9; }
@@ -2476,6 +2500,14 @@
   var IMAGE_DB = "personaGeneratorAbImages";
   var IMAGE_STORE = "abImagesV1";
   var ARMS = ["A", "B"];
+  //  追加レビュー項目の名前に使える形と、既存の評価項目として予約済みの名前。
+  //  書き出しの evaluation は平らな入れ物なので、既存項目と同じ名前は上書き事故になる。
+  var REVIEW_CHOICE_KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+  var RESERVED_EVALUATION_KEYS = [
+    "verdict", "failures", "notes", "priorityChecks", "missingPriorityCount",
+    "focusAssessment", "opticalIntentAlignment", "imageId", "rank", "metadata",
+    "evaluation", "reviewId", "scores", "supersedes", "ts", "reviewChoices"
+  ];
 
   // ---------------------------------------------------------------------------
   // [R4F] 実験ワークスペース
@@ -2956,6 +2988,12 @@
   var GUIDED_QUEUE_SCHEMA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.generation-execution\.v1$/;
   //  正規化本文のキー順。normalizedQueueSha256 はこの並びの JSON に対する SHA-256。
   var GUIDED_QUEUE_KEYS = ["sequence", "caseId", "sourceNo", "slot", "rank", "armGenerationId", "promptSha256"];
+  //  面の並べ方。宣言が無いときは従来どおり片面をまとめる(既存パッケージの並びは1件も変わらない)。
+  var GUIDED_SLOT_SEQUENCING = ["grouped-by-slot", "alternating-slots"];
+  function guidedSlotSequencingOf(g) {
+    var v = g && g.slotSequencing;
+    return (v === undefined || v === null || v === "") ? "grouped-by-slot" : String(v);
+  }
 
   function guidedNormalizedQueueText(items) {
     return JSON.stringify(items.map(function (i) {
@@ -2999,6 +3037,14 @@
     }
     if (typeof g.schemaVersion !== "string" || !GUIDED_QUEUE_SCHEMA_RE.test(g.schemaVersion)) {
       errors.push({ field: at + ".schemaVersion", reason: "対応していないキュー形式: " + String(g.schemaVersion) });
+    }
+    // 面の並べ方。宣言が無ければ従来どおり「片面をまとめて撮ってから次の面」。
+    //  交互に撮る契約もパッケージが宣言できる(この器はどちらが正しいかを決めない)。
+    var sequencing = guidedSlotSequencingOf(g);
+    if (GUIDED_SLOT_SEQUENCING.indexOf(sequencing) < 0) {
+      errors.push({ field: at + ".slotSequencing",
+        reason: "対応していない面の並べ方: " + String(g.slotSequencing)
+          + "（" + GUIDED_SLOT_SEQUENCING.join(" / ") + " のいずれか）" });
     }
     var items = g.items;
     if (!Array.isArray(items) || !items.length) {
@@ -3052,14 +3098,25 @@
         derivable = false; return;
       }
       if (!c.arms || !c.arms.A || !c.arms.B) { derivable = false; return; }
-      slots.forEach(function (slot) {
-        for (var rank = 1; rank <= need; rank += 1) {
-          seq += 1;
-          expected.push({
-            sequence: seq, caseId: c.caseId, sourceNo: c.sourceNo, slot: slot, rank: rank,
-            armGenerationId: c.arms[slot].generationId, promptSha256: c.arms[slot].promptSha256
-          });
+      var pairs = [];
+      if (sequencing === "alternating-slots") {
+        // 交互: 順位ごとに 先の面 → 後の面。同じ面が続けて並ばない。
+        for (var r = 1; r <= need; r += 1) {
+          slots.forEach(function (slot) { pairs.push({ slot: slot, rank: r }); });
         }
+      } else {
+        // 従来: 先の面の 1..need をすべて撮ってから、後の面の 1..need。
+        slots.forEach(function (slot) {
+          for (var q = 1; q <= need; q += 1) pairs.push({ slot: slot, rank: q });
+        });
+      }
+      pairs.forEach(function (pair) {
+        seq += 1;
+        expected.push({
+          sequence: seq, caseId: c.caseId, sourceNo: c.sourceNo, slot: pair.slot, rank: pair.rank,
+          armGenerationId: c.arms[pair.slot].generationId,
+          promptSha256: c.arms[pair.slot].promptSha256
+        });
       });
     });
 
@@ -3278,6 +3335,79 @@
         errors.push({
           field: "policy.opticalIntentAlignmentRequired",
           reason: "focusRubricRequired と同時には使えない（同じ判断を二重に尋ねることになる）"
+        });
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 追加のレビュー項目(policy.reviewChoiceItems)。
+    //  パッケージが「1問1答の単一選択」を必要な数だけ宣言できる汎用の器。
+    //  設問文・選択肢・各選択肢の意味はすべてパッケージが持ち、この画面は
+    //  実験固有の語を1つも決めない。宣言の無い既存パッケージでは何も増えない。
+    //  壊れた宣言は黙って捨てず読み込みを拒否する(捨てると「全項目に答えた」が
+    //  項目の欠けたまま成立してしまう)。
+    // -------------------------------------------------------------------------
+    if (pkg.policy && pkg.policy.reviewChoiceItems !== undefined && pkg.policy.reviewChoiceItems !== null) {
+      var items = pkg.policy.reviewChoiceItems;
+      if (!Array.isArray(items) || !items.length) {
+        errors.push({ field: "policy.reviewChoiceItems", reason: "1件以上の配列が必要" });
+      } else {
+        var seenKey = Object.create(null);
+        var scoreKeySet = Object.create(null);
+        ((pkg.policy.scoreKeys) || []).forEach(function (k) { scoreKeySet[String(k)] = true; });
+        items.forEach(function (it, i) {
+          var f = "policy.reviewChoiceItems[" + i + "]";
+          if (!it || typeof it !== "object" || Array.isArray(it)) {
+            errors.push({ field: f, reason: "項目がオブジェクトでない" });
+            return;
+          }
+          var key = String(it.key || "");
+          if (!REVIEW_CHOICE_KEY_RE.test(key)) {
+            errors.push({ field: f + ".key",
+              reason: "英字で始まる英数字とアンダースコアの識別子が必要: " + JSON.stringify(it.key) });
+          } else if (RESERVED_EVALUATION_KEYS.indexOf(key) >= 0 || scoreKeySet[key]) {
+            errors.push({ field: f + ".key", reason: "既存の評価項目と同じ名前は使えない: " + key });
+          } else if (seenKey[key]) {
+            errors.push({ field: f + ".key", reason: "項目名が重複している: " + key });
+          } else {
+            seenKey[key] = true;
+          }
+          if (typeof it.question !== "string" || !it.question) {
+            errors.push({ field: f + ".question", reason: "空でない設問文が必要" });
+          }
+          if (it.label !== undefined && (typeof it.label !== "string" || !it.label)) {
+            errors.push({ field: f + ".label", reason: "空でない文字列が必要" });
+          }
+          if (it.note !== undefined && (typeof it.note !== "string" || !it.note)) {
+            errors.push({ field: f + ".note", reason: "空でない文字列が必要" });
+          }
+          if (it.required !== undefined && typeof it.required !== "boolean") {
+            errors.push({ field: f + ".required", reason: "true / false が必要" });
+          }
+          var opts = it.options;
+          if (!Array.isArray(opts) || opts.length < 2) {
+            errors.push({ field: f + ".options", reason: "2つ以上の選択肢が必要" });
+            return;
+          }
+          var seenValue = Object.create(null);
+          opts.forEach(function (o, j) {
+            var of = f + ".options[" + j + "]";
+            if (!o || typeof o !== "object" || Array.isArray(o)) {
+              errors.push({ field: of, reason: "選択肢がオブジェクトでない" });
+              return;
+            }
+            var value = String(o.value || "");
+            if (!value) { errors.push({ field: of + ".value", reason: "空でない値が必要" }); return; }
+            if (typeof o.label !== "string" || !o.label) {
+              errors.push({ field: of + ".label", reason: "空でない短文が必要" });
+            }
+            // 選択肢の意味はその場に出す。専門語だけの短文にしない。
+            if (o.description !== undefined && (typeof o.description !== "string" || !o.description)) {
+              errors.push({ field: of + ".description", reason: "空でない文字列が必要" });
+            }
+            if (seenValue[value]) errors.push({ field: of + ".value", reason: "選択肢の値が重複している" });
+            seenValue[value] = true;
+          });
         });
       }
     }
@@ -4157,6 +4287,163 @@
     return String((values && values.opticalIntent) || "") ? 0 : 1;
   }
 
+  // ---------------------------------------------------------------------------
+  // 追加のレビュー項目(policy.reviewChoiceItems) — 1問1答の単一選択を必要な数だけ
+  //  パッケージが宣言できる汎用の器。設問文・選択肢・各選択肢の意味はパッケージが持つ。
+  //  宣言の無い既存パッケージでは項目も保存キーも1つも増えない。
+  // ---------------------------------------------------------------------------
+  function reviewChoiceItems() {
+    var raw = db.pkg && db.pkg.policy ? db.pkg.policy.reviewChoiceItems : null;
+    if (!Array.isArray(raw)) return [];
+    return raw.map(function (it) {
+      var opts = Array.isArray(it.options) ? it.options : [];
+      return {
+        key: String(it.key || ""),
+        label: typeof it.label === "string" && it.label ? it.label : String(it.question || ""),
+        question: String(it.question || ""),
+        note: typeof it.note === "string" ? it.note : "",
+        required: it.required !== false,
+        options: opts.map(function (o) {
+          return {
+            value: String(o.value || ""),
+            label: typeof o.label === "string" && o.label ? o.label : String(o.value || ""),
+            description: typeof o.description === "string" ? o.description : ""
+          };
+        }).filter(function (o) { return !!o.value; })
+      };
+    }).filter(function (it) { return !!it.key && it.options.length > 0; });
+  }
+  function reviewChoiceRequired() { return reviewChoiceItems().length > 0; }
+  function reviewChoiceSig() { return JSON.stringify(reviewChoiceItems()); }
+  function reviewChoiceFieldName(arm, key) { return reviewFieldId(arm, "choice_" + key); }
+  var reviewChoiceSignature = { A: null, B: null };
+
+  function syncReviewChoiceForm(arm) {
+    var sig = reviewChoiceSig();
+    if (reviewChoiceSignature[arm] === sig) return false;
+    reviewChoiceSignature[arm] = sig;
+    var host = el(reviewFieldId(arm, "choices"));
+    if (!host) return false;
+    clear(host);
+    reviewChoiceItems().forEach(function (item) {
+      var head = document.createElement("div");
+      head.className = "field-label";
+      head.id = reviewFieldId(arm, "choiceHead_" + item.key);
+      head.textContent = item.question;
+      host.appendChild(head);
+      if (item.note) {
+        var note = document.createElement("div");
+        note.className = "ab-choice-note sub";
+        note.textContent = item.note;
+        host.appendChild(note);
+      }
+      var group = document.createElement("div");
+      group.className = "ab-choice-group";
+      group.id = reviewFieldId(arm, "choiceGroup_" + item.key);
+      group.setAttribute("role", "radiogroup");
+      group.setAttribute("aria-label", item.question);
+      group.setAttribute("data-ab-choice-key", item.key);
+      item.options.forEach(function (o) {
+        var row = document.createElement("label");
+        row.className = "ab-choice-option";
+        row.setAttribute("data-ab-choice-value", o.value);
+        var input = document.createElement("input");
+        input.type = "radio";
+        input.name = reviewChoiceFieldName(arm, item.key);
+        input.value = o.value;
+        var text = document.createElement("span");
+        text.className = "ab-choice-text";
+        var strong = document.createElement("span");
+        strong.className = "ab-choice-label";
+        strong.textContent = o.label;
+        text.appendChild(strong);
+        // 選択肢の意味はその場に出す。専門語だけを見せて解釈を任せない。
+        if (o.description) {
+          var desc = document.createElement("span");
+          desc.className = "ab-choice-desc sub";
+          desc.textContent = o.description;
+          text.appendChild(desc);
+        }
+        row.appendChild(input);
+        row.appendChild(text);
+        group.appendChild(row);
+      });
+      host.appendChild(group);
+    });
+    show(reviewFieldId(arm, "choices"), reviewChoiceRequired());
+    return true;
+  }
+  function collectReviewChoices(arm) {
+    var out = Object.create(null);
+    reviewChoiceItems().forEach(function (item) {
+      var group = el(reviewFieldId(arm, "choiceGroup_" + item.key));
+      var picked = "";
+      if (group) {
+        var rows = group.querySelectorAll("input[type=radio]");
+        for (var i = 0; i < rows.length; i += 1) { if (rows[i].checked) { picked = rows[i].value; break; } }
+      }
+      out[item.key] = picked;
+    });
+    return out;
+  }
+  function setReviewChoices(arm, values) {
+    var map = values || Object.create(null);
+    reviewChoiceItems().forEach(function (item) {
+      var group = el(reviewFieldId(arm, "choiceGroup_" + item.key));
+      if (!group) return;
+      var allowed = item.options.map(function (o) { return o.value; });
+      var want = String(map[item.key] || "");
+      if (allowed.indexOf(want) < 0) want = "";
+      var rows = group.querySelectorAll("input[type=radio]");
+      for (var i = 0; i < rows.length; i += 1) rows[i].checked = (rows[i].value === want && !!want);
+    });
+  }
+  function reviewChoiceMapFrom(raw) {
+    var out = Object.create(null);
+    var src = raw && typeof raw === "object" ? raw : Object.create(null);
+    reviewChoiceItems().forEach(function (item) {
+      var v = String(src[item.key] || "");
+      var allowed = item.options.map(function (o) { return o.value; });
+      out[item.key] = allowed.indexOf(v) >= 0 ? v : "";
+    });
+    return out;
+  }
+  function reviewChoiceMapsEqual(a, b) {
+    var items = reviewChoiceItems();
+    for (var i = 0; i < items.length; i += 1) {
+      var k = items[i].key;
+      if (String((a || {})[k] || "") !== String((b || {})[k] || "")) return false;
+    }
+    return true;
+  }
+  function missingReviewChoiceAnswers(values) {
+    var map = (values && values.choices) || Object.create(null);
+    return reviewChoiceItems().filter(function (item) {
+      return item.required && !String(map[item.key] || "");
+    }).length;
+  }
+  function missingReviewChoiceLabels(values) {
+    var map = (values && values.choices) || Object.create(null);
+    return reviewChoiceItems().filter(function (item) {
+      return item.required && !String(map[item.key] || "");
+    }).map(function (item) { return item.label; });
+  }
+  // 保存する値。宣言の無いパッケージでは何も返さない(既存記録のハッシュを変えない)。
+  function reviewChoicesFromValues(values) {
+    var items = reviewChoiceItems();
+    if (!items.length) return null;
+    var map = (values && values.choices) || Object.create(null);
+    var out = Object.create(null);
+    var any = false;
+    items.forEach(function (item) {
+      var v = String(map[item.key] || "");
+      if (!v) return;
+      out[item.key] = v;
+      any = true;
+    });
+    return any ? out : null;
+  }
+
   function focusRequired() {
     return !!(db.pkg && db.pkg.policy && db.pkg.policy.focusRubricRequired === true);
   }
@@ -4894,6 +5181,15 @@
     host.appendChild(intentList);
     opticalIntentSignature[arm] = null;
 
+    // 追加のレビュー項目。中身はケースごとに syncReviewChoiceForm が入れる。
+    //  宣言の無いパッケージでは空のまま隠れる。
+    var choiceList = document.createElement("div");
+    choiceList.id = reviewFieldId(arm, "choices");
+    choiceList.className = "ab-choices";
+    choiceList.hidden = true;
+    host.appendChild(choiceList);
+    reviewChoiceSignature[arm] = null;
+
     // 重要要素の反映。行はケースごとに syncPriorityForm が入れる。
     var priorityHead = document.createElement("div");
     priorityHead.className = "field-label";
@@ -4948,6 +5244,7 @@
       if (n) n.addEventListener("change", keepDraft);
     });
     intentList.addEventListener("change", keepDraft);
+    choiceList.addEventListener("change", keepDraft);
     priorityList.addEventListener("change", keepDraft);
     focusList.addEventListener("change", keepDraft);
     box.addEventListener("change", keepDraft);
@@ -4962,6 +5259,7 @@
     setPriority(arm, Object.create(null));
     setFocus(arm, Object.create(null));
     setOpticalIntent(arm, "");
+    setReviewChoices(arm, Object.create(null));
   }
   function collectFailures(arm) {
     var box = el(reviewFieldId(arm, "failures"));
@@ -5016,7 +5314,8 @@
       notes: row.notes || "",
       priority: priorityMapFromChecks(row.priorityChecks),
       focus: focusMapFromAssessment(row.focusAssessment),
-      opticalIntent: String(row.opticalIntentAlignment || "")
+      opticalIntent: String(row.opticalIntentAlignment || ""),
+      choices: reviewChoiceMapFrom(row.reviewChoices)
     };
   }
   function currentReviewValues(arm) {
@@ -5031,7 +5330,8 @@
       notes: val(reviewFieldId(arm, "notes")),
       priority: collectPriority(arm),
       focus: collectFocus(arm),
-      opticalIntent: collectOpticalIntent(arm)
+      opticalIntent: collectOpticalIntent(arm),
+      choices: collectReviewChoices(arm)
     };
   }
   function reviewValuesEqual(a, b) {
@@ -5043,6 +5343,7 @@
     if (!priorityMapsEqual(a.priority, b.priority)) return false;
     if (!focusMapsEqual(a.focus, b.focus)) return false;
     if (String(a.opticalIntent || "") !== String(b.opticalIntent || "")) return false;
+    if (!reviewChoiceMapsEqual(a.choices, b.choices)) return false;
     return JSON.stringify((a.failures || []).slice().sort()) === JSON.stringify((b.failures || []).slice().sort());
   }
   function reviewValuesEmpty(values) {
@@ -5053,6 +5354,8 @@
     var focus = values.focus || {};
     if (String(focus.targetVisibility || "")) return false;
     if (String(values.opticalIntent || "")) return false;
+    var choices = values.choices || {};
+    if (Object.keys(choices).some(function (k) { return !!String(choices[k] || ""); })) return false;
     return ((db.pkg && db.pkg.policy.scoreKeys) || []).every(function (k) {
       return !String((values.scores || {})[k] || "");
     });
@@ -5073,6 +5376,7 @@
     if (sourceNo == null) return true;
     if (missingPriorityAnswers(values, sourceNo) !== 0) return false;
     if (missingOpticalIntentAnswers(values) !== 0) return false;
+    if (missingReviewChoiceAnswers(values) !== 0) return false;
     return missingFocusAnswers(values, sourceNo) === 0;
   }
   function captureReviewDraft(arm) {
@@ -5193,6 +5497,7 @@
     setPriority(arm, values.priority || Object.create(null));
     setFocus(arm, values.focus || Object.create(null));
     setOpticalIntent(arm, values.opticalIntent || "");
+    setReviewChoices(arm, values.choices || Object.create(null));
   }
 
   // ---------------------------------------------------------------------------
@@ -5273,6 +5578,7 @@
     var rebuilt = syncPriorityForm(arm);
     if (syncFocusForm(arm)) rebuilt = true;
     if (syncOpticalIntentForm(arm)) rebuilt = true;
+    if (syncReviewChoiceForm(arm)) rebuilt = true;
     if (rebuilt) prefillReview(arm);
     var rows = activeImagesFor(ui.sourceNo, arm);
     var max = maxImagesForArm(ui.sourceNo, arm);
@@ -5452,6 +5758,7 @@
     //  「未入力 0 件」になり、保存も書き出しも通ってしまう。
     ARMS.forEach(function (arm) {
       var noVerdict = 0, noScore = 0, noPriority = 0, noFocus = 0, noIntent = 0;
+      var noChoice = Object.create(null);
       rowsByArm[arm].forEach(function (r) {
         var v = reviewValuesFor(r.imageId);
         if (!v || !v.verdict) noVerdict += 1;
@@ -5459,6 +5766,11 @@
         noPriority += missingPriorityAnswers(v, ui.sourceNo);
         noFocus += missingFocusAnswers(v, ui.sourceNo);
         noIntent += missingOpticalIntentAnswers(v);
+        // パッケージが宣言した追加項目も数える。数えないとその項目だけ空のまま
+        // 「未入力 0 件」になり、保存も書き出しも通ってしまう。
+        missingReviewChoiceLabels(v).forEach(function (label) {
+          noChoice[label] = (noChoice[label] || 0) + 1;
+        });
       });
       if (noVerdict) { count += noVerdict; reasons.push(arm + " の判定が " + noVerdict + " 件"); }
       if (noScore) {
@@ -5469,6 +5781,10 @@
       if (noPriority) { count += noPriority; reasons.push(arm + " の重要要素の反映が " + noPriority + " 件"); }
       if (noFocus) { count += noFocus; reasons.push(arm + " の合焦対象の反映が " + noFocus + " 件"); }
       if (noIntent) { count += noIntent; reasons.push(arm + " の狙いとの一致が " + noIntent + " 件"); }
+      Object.keys(noChoice).forEach(function (label) {
+        count += noChoice[label];
+        reasons.push(arm + " の" + label + "が " + noChoice[label] + " 件");
+      });
     });
 
     // 3. 比較対象の選択
@@ -6046,6 +6362,7 @@
     ARMS.forEach(syncPriorityForm);
     ARMS.forEach(syncFocusForm);
     ARMS.forEach(syncOpticalIntentForm);
+    ARMS.forEach(syncReviewChoiceForm);
     ARMS.forEach(clearReviewInputs);
     setVal("abPreference", "");
     setVal("abCompareNotes", "");
@@ -6512,6 +6829,10 @@
         if (opticalIntentRequired() && String(input.opticalIntent || "")) {
           saved.opticalIntentAlignment = String(input.opticalIntent);
         }
+        // 追加のレビュー項目も、宣言したパッケージのときだけ足す。
+        //  宣言の無い記録へ空の入れ物を入れると、既存の evaluationSha256 が変わってしまう。
+        var choices = reviewChoicesFromValues(input);
+        if (choices) saved.reviewChoices = choices;
         db.reviews.push(saved);
         delete db.reviewDrafts[row.imageId];
       });
@@ -6667,6 +6988,14 @@
             // [R5B] 狙いとの一致を持つ記録にだけ出す後方互換の追加項目。
             if (rev && rev.opticalIntentAlignment) {
               evaluation.opticalIntentAlignment = String(rev.opticalIntentAlignment);
+            }
+            // 追加のレビュー項目を持つ記録にだけ出す後方互換の追加項目。
+            // 保存済みの値をそのまま出す(ここで作り直さない)。
+            if (rev && rev.reviewChoices && typeof rev.reviewChoices === "object") {
+              Object.keys(rev.reviewChoices).forEach(function (k) {
+                var v = String(rev.reviewChoices[k] || "");
+                if (v) evaluation[k] = v;
+              });
             }
             if (rev && rev.focusAssessment) {
               var fa = rev.focusAssessment;
