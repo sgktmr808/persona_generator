@@ -1246,7 +1246,65 @@
   var batchId = "";
   var activeView = "extract";
   var reviewDrafts = {};
-  var reviewBlobUrls = {};
+  // [メモリ対策 2026-09-23] iPhone の「しばらく使うと再読み込みが繰り返される」現象の対策。
+  //  原因は原寸画像のデコード(1枚で数十MB)と、項目を移動しても解放されない object URL の蓄積で
+  //  WebKit のタブ上限を超え、Safari がページを強制終了→自動再読み込みしていたこと。
+  //  表示は長辺 PREVIEW_MAX px の JPEG サムネイルだけを使い(保存する実体は原寸のまま)、
+  //  表示中の項目以外のプレビューは都度解放する。縮小に失敗する形式は原寸のまま表示する(従来どおり)。
+  var PersonaPreview = window.PersonaPreview = (function () {
+    var PREVIEW_MAX = 1280;
+    // デコード後のメモリは画素数で決まる(ファイルサイズではない)ので、長辺が PREVIEW_MAX を超える
+    //  画像はファイルが小さくても縮小する。長辺が収まっている画像はそのまま使う。
+    function shrink(blob) {
+      if (!blob || typeof createImageBitmap !== "function" || typeof document === "undefined") return Promise.resolve(blob);
+      return createImageBitmap(blob).then(function (bmp) {
+        var w = bmp.width, h = bmp.height;
+        if (Math.max(w, h) <= PREVIEW_MAX) { if (bmp.close) bmp.close(); return blob; }
+        var scale = PREVIEW_MAX / Math.max(w, h, 1);
+        var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = cw; canvas.height = ch;
+        var ctx = canvas.getContext("2d");
+        if (!ctx) { if (bmp.close) bmp.close(); return blob; }
+        ctx.drawImage(bmp, 0, 0, cw, ch);
+        if (bmp.close) bmp.close();
+        return new Promise(function (resolve) {
+          canvas.toBlob(function (out) {
+            canvas.width = 0; canvas.height = 0;
+            resolve(out && out.size < blob.size ? out : blob);
+          }, "image/jpeg", 0.82);
+        });
+      }).catch(function () { return blob; });
+    }
+    function create() {
+      var cache = Object.create(null);
+      var pending = Object.create(null);
+      function urlFor(key, blob) {
+        if (cache[key]) return Promise.resolve(cache[key]);
+        if (pending[key]) return pending[key];
+        pending[key] = shrink(blob).then(function (small) {
+          delete pending[key];
+          if (cache[key]) return cache[key];
+          cache[key] = URL.createObjectURL(small);
+          return cache[key];
+        }, function () { delete pending[key]; return ""; });
+        return pending[key];
+      }
+      function release(key) {
+        var url = cache[key];
+        if (!url) return;
+        try { URL.revokeObjectURL(url); } catch (_) { /* 解放失敗は無視 */ }
+        delete cache[key];
+      }
+      function releaseExcept(keep) { Object.keys(cache).forEach(function (k) { if (!keep[k]) release(k); }); }
+      function releaseAll() { Object.keys(cache).forEach(release); }
+      function get(key) { return cache[key] || ""; }
+      function size() { return Object.keys(cache).length; }
+      return { urlFor: urlFor, release: release, releaseExcept: releaseExcept, releaseAll: releaseAll, get: get, size: size };
+    }
+    return { create: create, shrink: shrink, PREVIEW_MAX: PREVIEW_MAX };
+  })();
+  var reviewPreviews = PersonaPreview.create();
   var reviewRenderedIndex = -1;
   var failureTypes = [
     ["composition", "構図"], ["hair", "髪"], ["makeup", "メイク"],
@@ -1981,18 +2039,18 @@
   }
 
   function loadImagePreview(image, img) {
-    if (reviewBlobUrls[image.imageId]) { img.src = reviewBlobUrls[image.imageId]; return; }
-    if (image.file) {
-      reviewBlobUrls[image.imageId] = URL.createObjectURL(image.file);
-      img.src = reviewBlobUrls[image.imageId];
-      return;
-    }
-    var loader = image.legacyStoreKey ? getLegacyStoredImage(image.legacyStoreKey) : getStoredImage(image.imageId);
+    var key = image.imageId;
+    var cached = reviewPreviews.get(key);
+    if (cached) { img.src = cached; return; }
+    var loader = image.file
+      ? Promise.resolve({ blob: image.file })
+      : (image.legacyStoreKey ? getLegacyStoredImage(image.legacyStoreKey) : getStoredImage(image.imageId));
     loader.then(function (stored) {
-      if (!stored || !stored.blob || !document.body.contains(img)) return;
-      reviewBlobUrls[image.imageId] = URL.createObjectURL(stored.blob);
-      img.src = reviewBlobUrls[image.imageId];
-    });
+      if (!stored || !stored.blob || !document.body.contains(img)) return "";
+      return reviewPreviews.urlFor(key, stored.blob);
+    }).then(function (url) {
+      if (url && document.body.contains(img)) img.src = url;
+    }).catch(function () { /* 表示できない画像は空のまま(保存には影響しない) */ });
   }
 
   function renderReviewImages(draft) {
@@ -2077,6 +2135,10 @@
     var item = items[index];
     var existing = reviewForItem(item);
     var draft = draftForItem(item);
+    // 表示中の項目の画像以外のプレビューを解放する(項目を行き来しても object URL が溜まらない)。
+    var keepPreview = Object.create(null);
+    draft.images.forEach(function (image) { keepPreview[image.imageId] = true; });
+    reviewPreviews.releaseExcept(keepPreview);
     document.getElementById("reviewGenerationId").textContent = generationId(item);
     document.getElementById("reviewCurrentPrompt").textContent = item.prompt || "(本文なし)";
     document.getElementById("reviewCurrentSettings").textContent = item.settings
@@ -2117,8 +2179,7 @@
     if (action === "remove") {
       var removed = draft.images.splice(current, 1)[0];
       if (!removed.file) draft.removedImageIds.push(removed.imageId);
-      if (reviewBlobUrls[removed.imageId]) URL.revokeObjectURL(reviewBlobUrls[removed.imageId]);
-      delete reviewBlobUrls[removed.imageId];
+      reviewPreviews.release(removed.imageId);
     } else {
       var target = action === "up" ? current - 1 : current + 1;
       if (target < 0 || target >= draft.images.length) return;
@@ -2157,7 +2218,8 @@
       return;
     }
     setReviewStatus("画像と順位を記録しています…", false);
-    Promise.all(draft.images.map(function (image) {
+    // [メモリ対策] 1枚ずつ順番に読み込んでハッシュ・保存する(同時に全画像を ArrayBuffer へ展開しない)。
+    function persistOneImage(image) {
       if (!image.file && image.legacyStoreKey) {
         return getLegacyStoredImage(image.legacyStoreKey).then(function (stored) {
           if (!stored || !stored.blob) return image.metadata;
@@ -2170,7 +2232,10 @@
         image.metadata = imageMetadata(image.file, hash);
         return putStoredImage(image.imageId, generationId(item), image.file, hash).then(function () { return image.metadata; });
       });
-    })).then(function () {
+    }
+    draft.images.reduce(function (chain, image) {
+      return chain.then(function () { return persistOneImage(image); });
+    }, Promise.resolve()).then(function () {
       return Promise.all(draft.removedImageIds.map(deleteStoredImage));
     }).then(function () {
       var now = new Date().toISOString();
@@ -2301,11 +2366,10 @@
     if (!text.trim()) { statusEl.textContent = "貼り付け欄が空です。"; return; }
     try {
       var parsed = parseExport(text);
-      Object.keys(reviewBlobUrls).forEach(function (key) { URL.revokeObjectURL(reviewBlobUrls[key]); });
+      reviewPreviews.releaseAll();
       items = parsed;
       index = 0;
       batchId = "b" + Date.now().toString(36) + "-" + shortHash(text);
-      reviewBlobUrls = {};
       reviewDrafts = {};
       reviewRenderedIndex = -1;
       saveToStorage();
@@ -2345,8 +2409,7 @@
     viewer.style.display = "none";
     bottomBar.classList.remove("visible");
     reviewBottomBar.classList.remove("visible");
-    Object.keys(reviewBlobUrls).forEach(function (key) { URL.revokeObjectURL(reviewBlobUrls[key]); });
-    reviewBlobUrls = {};
+    reviewPreviews.releaseAll();
     reviewDrafts = {};
     reviewRenderedIndex = -1;
     renderReviewAvailability();
@@ -2428,8 +2491,7 @@
     localStorage.removeItem(REVIEW_STORAGE_KEY);
     clearStoredImages().then(function () {
       reviewDrafts = {};
-      Object.keys(reviewBlobUrls).forEach(function (key) { URL.revokeObjectURL(reviewBlobUrls[key]); });
-      reviewBlobUrls = {};
+      reviewPreviews.releaseAll();
       renderReviewProgress();
       renderReviewItem();
       renderReviewHistory();
@@ -2938,30 +3000,38 @@
   // ---------------------------------------------------------------------------
   // プレビュー(Object URL は必ず対で解放する)
   // ---------------------------------------------------------------------------
+  // [メモリ対策 2026-09-23] プレビューは長辺 1280px の縮小 JPEG(window.PersonaPreview)で表示し、
+  //  原寸のデコードを画面に残さない。縮小は非同期なので、出来上がり次第 render() で反映する。
+  var abPreviews = window.PersonaPreview.create();
   function setPreview(imageId, blob) {
     releasePreview(imageId);
-    try { ui.previews[imageId] = URL.createObjectURL(blob); return true; }
-    catch (_) { return false; }
+    return abPreviews.urlFor(imageId, blob).then(function (url) {
+      if (!url) return false;
+      ui.previews[imageId] = url;
+      render();
+      return true;
+    }, function () { return false; });
   }
   function releasePreview(imageId) {
-    var url = ui.previews[imageId];
-    if (!url) return;
-    try { URL.revokeObjectURL(url); } catch (_) { /* 解放失敗は無視 */ }
+    abPreviews.release(imageId);
     delete ui.previews[imageId];
   }
-  function releaseAllPreviews() { Object.keys(ui.previews).forEach(releasePreview); }
+  function releaseAllPreviews() { Object.keys(ui.previews).forEach(releasePreview); abPreviews.releaseAll(); }
   function previewUrl(imageId) { return ui.previews[imageId] || null; }
 
   function hydratePreviews(sourceNo) {
     var rows = ARMS.reduce(function (acc, arm) { return acc.concat(activeImagesFor(sourceNo, arm)); }, []);
-    return Promise.all(rows.map(function (r) {
-      if (previewUrl(r.imageId)) return Promise.resolve(false);
-      return getImageBlob(r.imageId).then(function (blob) {
-        // [R4E] 実体の有無はここでも控える(記録だけ残って実体を失った枠を見逃さない)。
-        ui.blobStatus[r.imageId] = blob ? "present" : "missing";
-        return blob ? setPreview(r.imageId, blob) : false;
-      }, function () { ui.blobStatus[r.imageId] = "missing"; return false; });
-    })).then(function () { render(); });
+    // 1枚ずつ順に読み込む(同時デコードでメモリの山を作らない)。
+    return rows.reduce(function (chain, r) {
+      return chain.then(function () {
+        if (previewUrl(r.imageId)) return false;
+        return getImageBlob(r.imageId).then(function (blob) {
+          // [R4E] 実体の有無はここでも控える(記録だけ残って実体を失った枠を見逃さない)。
+          ui.blobStatus[r.imageId] = blob ? "present" : "missing";
+          return blob ? setPreview(r.imageId, blob) : false;
+        }, function () { ui.blobStatus[r.imageId] = "missing"; return false; });
+      });
+    }, Promise.resolve()).then(function () { render(); });
   }
 
   // ---------------------------------------------------------------------------

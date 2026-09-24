@@ -29,6 +29,8 @@ const HERE = __dirname;
 //   x4 は同時に別の作業が走っている端末での揺れ、+90s は起動・Chrome確保の固定費。
 // baselineMs は2回のうち**遅い方**を採る。
 const CHECKS = [
+  { file: "check_preview_memory.cjs", marker: "PREVIEW MEMORY BROWSER ACCEPTANCE PASSED",
+    baselineMs: 47000, timeoutMs: 190000 }, // 画像プレビューの縮小・解放・逐次保存(iPhone 再読み込みループ対策)
   { file: "check_ab_focus_assessment.cjs", marker: "R4B FOCUS ASSESSMENT BROWSER ACCEPTANCE PASSED",
     baselineMs: 19000, timeoutMs: 110000 },
   { file: "check_ab_workspace_entry.cjs", marker: "R4F WORKSPACE ENTRY BROWSER ACCEPTANCE PASSED",
