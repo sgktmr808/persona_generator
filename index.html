@@ -791,8 +791,64 @@
 </style>
 </head>
 <body>
+<script>
+// [落ちる対策 2026-09-24] 起動が最後まで進まずにページが落ちたら、次の起動は安全モード(画面の自動復元と
+//  画像表示を止める)で開く。起動の各段階を端末に書き残し、安全モードの画面に表示する(原因を事実で特定する)。
+//  記録(レビュー・実験・画像)には一切触れない。
+(function () {
+  var BUILD = "2026-09-24d";
+  var GUARD = "persona.bootGuard.v1", CRUMBS = "persona.bootCrumbs.v1";
+  var now = Date.now(), g = null, prevCrumbs = [];
+  try { g = JSON.parse(localStorage.getItem(GUARD) || "null"); } catch (_) { g = null; }
+  try { prevCrumbs = JSON.parse(localStorage.getItem(CRUMBS) || "[]"); } catch (_) { prevCrumbs = []; }
+  // 前回の起動が「安定」に届かないまま終わった = 落ちた
+  var crashed = !!(g && g.pending && now - g.ts < 10 * 60 * 1000);
+  var crashes = crashed ? (g.crashes || 0) + 1 : 0;
+  var forced = /(^|[?&])safe=1(&|$)/.test(String(location.search || ""));
+  var normalForced = /(^|[?&])safe=0(&|$)/.test(String(location.search || ""));
+  window.PERSONA_BUILD = BUILD;
+  window.PERSONA_SAFE_MODE = !normalForced && (forced || crashes >= 1);
+  window.PERSONA_LAST_CRASH_CRUMBS = crashed ? prevCrumbs : [];
+  var crumbs = [];
+  function save() { try { localStorage.setItem(CRUMBS, JSON.stringify(crumbs.slice(-40))); } catch (_) {} }
+  window.personaCrumb = function (step) {
+    crumbs.push(new Date().toISOString().slice(11, 19) + " " + String(step));
+    save();
+  };
+  try { localStorage.setItem(GUARD, JSON.stringify({ pending: true, ts: now, crashes: crashes, build: BUILD })); } catch (_) {}
+  window.personaCrumb("boot " + BUILD + (window.PERSONA_SAFE_MODE ? " SAFE" : "") + " crashes=" + crashes);
+  function stable() {
+    try { localStorage.setItem(GUARD, JSON.stringify({ pending: false, ts: Date.now(), crashes: 0, build: BUILD })); } catch (_) {}
+  }
+  // 20秒落ちずに動いたら安定とみなす。利用者が自分で離れた(pagehide)場合も落ちたとは数えない。
+  setTimeout(function () { window.personaCrumb("stable"); stable(); }, 20000);
+  window.addEventListener("pagehide", stable);
+})();
+</script>
 <div class="wrap">
-  <h1>Persona Generator</h1>
+  <h1>Persona Generator <span id="personaBuild" style="font-size:12px;font-weight:400;color:var(--text-dim)"></span></h1>
+  <div id="personaSafeBanner" hidden style="border:1px solid #c80;background:rgba(200,136,0,.12);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13px;line-height:1.5">
+    <strong>安全モードで開きました。</strong>前回ページが開く途中で落ちたため、前の画面への自動復帰と画像の表示を止めています。記録と画像は消えていません。
+    <div style="margin-top:6px"><button type="button" id="personaNormalMode">通常モードで開き直す</button> <button type="button" id="personaCopyCrumbs">落ちる直前の記録をコピー</button></div>
+    <pre id="personaCrumbs" style="white-space:pre-wrap;font-size:11px;max-height:140px;overflow:auto;margin:6px 0 0"></pre>
+  </div>
+  <script>
+  (function () {
+    var b = document.getElementById("personaBuild");
+    if (b) b.textContent = "版 " + window.PERSONA_BUILD;
+    if (!window.PERSONA_SAFE_MODE) return;
+    var banner = document.getElementById("personaSafeBanner");
+    banner.hidden = false;
+    var text = (window.PERSONA_LAST_CRASH_CRUMBS || []).join("\n") || "(記録なし)";
+    document.getElementById("personaCrumbs").textContent = "落ちる直前の記録:\n" + text;
+    document.getElementById("personaNormalMode").addEventListener("click", function () {
+      location.href = location.pathname + "?safe=0";
+    });
+    document.getElementById("personaCopyCrumbs").addEventListener("click", function () {
+      try { navigator.clipboard.writeText("版 " + window.PERSONA_BUILD + "\n" + text); } catch (_) {}
+    });
+  })();
+  </script>
   <p class="sub">
     生成アプリ側の「全件+設定をコピー」でコピーした内容をここに貼り付けると、1件ずつ本文と設定値を取り出せます。
   </p>
@@ -1262,6 +1318,7 @@
     //  画像はファイルが小さくても縮小する。長辺が収まっている画像はそのまま使う。
     function shrink(blob) {
       if (!blob || typeof createImageBitmap !== "function" || typeof document === "undefined") return Promise.resolve(blob);
+      if (window.personaCrumb) window.personaCrumb("decode " + blob.size + "B");
       return createImageBitmap(blob).then(function (bmp) {
         var w = bmp.width, h = bmp.height;
         if (Math.max(w, h) <= PREVIEW_MAX) { if (bmp.close) bmp.close(); return blob; }
@@ -1285,6 +1342,7 @@
       var cache = Object.create(null);
       var pending = Object.create(null);
       function urlFor(key, blob) {
+        if (window.PERSONA_SAFE_MODE) return Promise.resolve(""); // 安全モードでは画像を表示しない
         if (cache[key]) return Promise.resolve(cache[key]);
         if (pending[key]) return pending[key];
         pending[key] = shrink(blob).then(function (small) {
@@ -3117,6 +3175,7 @@
 
   function hydratePreviews(sourceNo) {
     var rows = ARMS.reduce(function (acc, arm) { return acc.concat(activeImagesFor(sourceNo, arm)); }, []);
+    personaCrumb("ab previews case " + sourceNo + " n=" + rows.length);
     // 1枚ずつ順に読み込む(同時デコードでメモリの山を作らない)。
     return rows.reduce(function (chain, r) {
       return chain.then(function () {
@@ -4881,15 +4940,29 @@
   // 実体の有無は記録から分からないので、読み込み直後に必ず走査する。
   // 未走査(undefined)は「無い」と同じ扱い。楽観視すると実体を失ったまま完了表示になる。
   function guidedBlobPresent(imageId) { return ui.blobStatus[imageId] === "present"; }
+  // [落ちる対策 2026-09-24] 以前は全画像の実体を同時に読み出して有無を確かめていた(画像が増えると
+  //  開いた瞬間にメモリが跳ね上がり iPhone でページが落ち、再読み込みを繰り返していた)。
+  //  実体は読まず、1回の接続で鍵の有無(count)だけを確かめる。
   function guidedScanBlobs() {
     if (!guidedEnabled()) { ui.blobScanned = true; return Promise.resolve(); }
-    var rows = (db.images || []).filter(function (r) { return r && !isDead(r.imageId); });
-    return Promise.all(rows.map(function (r) {
-      if (ui.blobStatus[r.imageId]) return null;
-      return getImageBlob(r.imageId).then(function (b) {
-        ui.blobStatus[r.imageId] = b ? "present" : "missing";
-      }, function () { ui.blobStatus[r.imageId] = "missing"; });
-    })).then(function () { ui.blobScanned = true; render(); });
+    var rows = (db.images || []).filter(function (r) { return r && !isDead(r.imageId) && !ui.blobStatus[r.imageId]; });
+    personaCrumb("guidedScanBlobs " + rows.length);
+    if (!rows.length) { ui.blobScanned = true; render(); return Promise.resolve(); }
+    return openImageDb().then(function (d) {
+      return new Promise(function (resolve) {
+        var tx = d.transaction([IMAGE_STORE], "readonly");
+        var store = tx.objectStore(IMAGE_STORE);
+        rows.forEach(function (r) {
+          var q = store.count(blobKeyFor(r.imageId));
+          q.onsuccess = function () { ui.blobStatus[r.imageId] = q.result > 0 ? "present" : "missing"; };
+          q.onerror = function () { ui.blobStatus[r.imageId] = "missing"; };
+        });
+        tx.oncomplete = function () { d.close(); resolve(); };
+        tx.onerror = tx.onabort = function () { d.close(); resolve(); };
+      });
+    }, function () {
+      rows.forEach(function (r) { ui.blobStatus[r.imageId] = "missing"; });
+    }).then(function () { ui.blobScanned = true; personaCrumb("guidedScanBlobs done"); render(); });
   }
 
   // 進捗は保存済み画像から毎回導く。可変カウンタに頼らない
@@ -7400,7 +7473,9 @@
     clearLoadedRecords();
     activeWs = ws;
     ui.forceSelect = false;
+    personaCrumb("ab restore " + ((readWsRaw(ws) || "").length) + " chars");
     var loaded = restore();
+    personaCrumb("ab restored images=" + ((db.images || []).length));
     if (wsIndex.activeId !== ws.id) {
       wsIndex.activeId = ws.id;
       writeIndex(wsIndex);
@@ -7587,6 +7662,7 @@
   }
 
   function bootstrapWorkspaces() {
+    personaCrumb("ab bootstrap");
     entryMode = detectEntryMode();
     wsIndex = readIndex();
     var mig = migrateLegacySingleton(wsIndex);
@@ -7874,6 +7950,8 @@
       // [再読み込み対策 2026-09-24] iOS がページを破棄して読み直したとき、開いていた画面へ戻す。
       var lastView = null;
       try { lastView = localStorage.getItem("persona.session.view.v1"); } catch (_) { lastView = null; }
+      if (window.PERSONA_SAFE_MODE) lastView = null; // 安全モードでは前の画面へ自動で戻らない
+      if (lastView) personaCrumb("restore view " + lastView);
       var lastTab = lastView === "ab" ? document.getElementById("abTab")
         : (lastView === "review" ? document.getElementById("reviewTab") : null);
       if (lastTab) lastTab.click();
