@@ -796,7 +796,7 @@
 //  画像表示を止める)で開く。起動の各段階を端末に書き残し、安全モードの画面に表示する(原因を事実で特定する)。
 //  記録(レビュー・実験・画像)には一切触れない。
 (function () {
-  var BUILD = "2026-09-24h";
+  var BUILD = "2026-09-24i";
   var GUARD = "persona.bootGuard.v1", CRUMBS = "persona.bootCrumbs.v1";
   var now = Date.now(), g = null, prevCrumbs = [];
   try { g = JSON.parse(localStorage.getItem(GUARD) || "null"); } catch (_) { g = null; }
@@ -893,13 +893,13 @@
 
   <section id="extractView" role="tabpanel" aria-labelledby="extractTab">
   <div class="card">
-    <textarea id="pasteArea" placeholder="ここに貼り付け(&lt;&lt;&lt;PCEXPORT v1 count=... で始まるテキスト)"></textarea>
+    <textarea autocomplete="off" id="pasteArea" placeholder="ここに貼り付け(&lt;&lt;&lt;PCEXPORT v1 count=... で始まるテキスト)"></textarea>
     <div class="row">
       <button id="parseButton" class="primary grow" type="button">解析する</button>
       <button id="fileButton" type="button">ファイルを開く</button>
       <button id="clearButton" type="button">クリア</button>
     </div>
-    <input id="fileInput" type="file" accept=".md,.txt,text/markdown,text/plain" style="display:none;" />
+    <input id="fileInput" type="file" autocomplete="off" accept=".md,.txt,text/markdown,text/plain" style="display:none;" />
     <div id="status"></div>
   </div>
 
@@ -964,13 +964,13 @@
         </details>
 
         <label class="field-label" for="reviewImages">この生成IDの画像（最大5枚）</label>
-        <input id="reviewImages" type="file" accept="image/*" multiple />
+        <input id="reviewImages" type="file" autocomplete="off" accept="image/*" multiple />
         <div id="reviewImageCount" class="image-count">0 / 5枚</div>
         <div class="image-count">順位は登録画像内の相対比較です。1枚だけの「1位」も採用を意味しません。</div>
         <div id="reviewImageList" class="review-image-list"></div>
 
         <label class="field-label" for="reviewComparisonNotes">順位の理由・比較メモ（任意）</label>
-        <textarea id="reviewComparisonNotes" class="comparison-note" placeholder="例：顔の雰囲気と光が最も意図に近い"></textarea>
+        <textarea autocomplete="off" id="reviewComparisonNotes" class="comparison-note" placeholder="例：顔の雰囲気と光が最も意図に近い"></textarea>
 
         <div class="row">
           <button id="saveReviewOnlyButton" class="grow" type="button">この順位で保存</button>
@@ -1010,7 +1010,7 @@
       <p class="section-lead">実験パッケージを開くと、A と B を見比べて評価する作業台になります。パッケージも記録もこの端末の中だけに保存され、どこにも送信されません。</p>
       <div id="abIntroRow" class="row">
         <button id="abOpenButton" class="grow primary" type="button">パッケージを読み込む</button>
-        <input id="abFileInput" type="file" accept=".json,application/json" style="display:none;" />
+        <input id="abFileInput" type="file" autocomplete="off" accept=".json,application/json" style="display:none;" />
       </div>
       <div id="abPackageStatus" class="review-status"></div>
     </div>
@@ -1109,12 +1109,12 @@
              失敗時は自動で開き、全選択して iPhone の選択メニューからコピーできるようにする。 -->
         <details id="abGuidedPromptWrap" class="ab-guided-promptwrap">
           <summary class="sub">自動コピーが使えないとき（本文を表示して手動でコピー）</summary>
-          <textarea id="abGuidedPrompt" class="ab-guided-prompt" readonly aria-label="この手順の本文（手動コピー用）"></textarea>
+          <textarea autocomplete="off" id="abGuidedPrompt" class="ab-guided-prompt" readonly aria-label="この手順の本文（手動コピー用）"></textarea>
         </details>
         <div id="abGuidedCopyHint" class="ab-guided-hint sub" role="status" hidden></div>
         <label id="abGuidedDrop" class="ab-drop ab-guided-drop" for="abGuidedFile">
           <span class="ab-drop-text">生成された画像をここへ登録</span>
-          <input id="abGuidedFile" type="file" accept="image/*" class="ab-drop-input" aria-label="生成された画像を登録" />
+          <input id="abGuidedFile" type="file" autocomplete="off" accept="image/*" class="ab-drop-input" aria-label="生成された画像を登録" />
         </label>
         <div id="abGuidedThumbWrap" class="ab-guided-thumbwrap" hidden>
           <img id="abGuidedThumb" class="ab-guided-thumb" alt="" />
@@ -1139,7 +1139,7 @@
           <input id="abGuidedRepairNote" type="text" placeholder="例: 保存領域の不足で消えた" />
           <label id="abGuidedRepairDrop" class="ab-drop ab-guided-drop" for="abGuidedRepairFile">
             <span class="ab-drop-text">同じ枠へ画像を登録し直す</span>
-            <input id="abGuidedRepairFile" type="file" accept="image/*" class="ab-drop-input" aria-label="同じ枠へ登録し直す画像" />
+            <input id="abGuidedRepairFile" type="file" autocomplete="off" accept="image/*" class="ab-drop-input" aria-label="同じ枠へ登録し直す画像" />
           </label>
           <div class="row">
             <button id="abGuidedRepairCancel" class="grow" type="button">やめる</button>
@@ -1164,12 +1164,12 @@
           </div>
           <details class="ab-body">
             <summary class="sub">本文を見る</summary>
-            <textarea id="abPromptA" rows="8" readonly aria-label="A の本文"></textarea>
+            <textarea autocomplete="off" id="abPromptA" rows="8" readonly aria-label="A の本文"></textarea>
           </details>
           <div id="abDropA" class="ab-drop" aria-disabled="false">
             <span class="ab-drop-text">Aに追加する画像</span>
             <div class="ab-file-button-wrap">
-              <input id="abFileA" type="file" accept="image/*" multiple class="ab-side-file-input" aria-label="Aに追加する画像を写真から選ぶ" />
+              <input id="abFileA" type="file" autocomplete="off" accept="image/*" multiple class="ab-side-file-input" aria-label="Aに追加する画像を写真から選ぶ" />
               <span id="abFileFaceA" class="ab-file-button-face" aria-hidden="true">写真から選ぶ</span>
             </div>
             <div id="abUploadStateA" class="ab-upload-state"></div>
@@ -1200,12 +1200,12 @@
           </div>
           <details class="ab-body">
             <summary class="sub">本文を見る</summary>
-            <textarea id="abPromptB" rows="8" readonly aria-label="B の本文"></textarea>
+            <textarea autocomplete="off" id="abPromptB" rows="8" readonly aria-label="B の本文"></textarea>
           </details>
           <div id="abDropB" class="ab-drop" aria-disabled="false">
             <span class="ab-drop-text">Bに追加する画像</span>
             <div class="ab-file-button-wrap">
-              <input id="abFileB" type="file" accept="image/*" multiple class="ab-side-file-input" aria-label="Bに追加する画像を写真から選ぶ" />
+              <input id="abFileB" type="file" autocomplete="off" accept="image/*" multiple class="ab-side-file-input" aria-label="Bに追加する画像を写真から選ぶ" />
               <span id="abFileFaceB" class="ab-file-button-face" aria-hidden="true">写真から選ぶ</span>
             </div>
             <div id="abUploadStateB" class="ab-upload-state"></div>
@@ -1234,7 +1234,7 @@
           <option value="tie">引き分け</option>
         </select>
         <label class="field-label" for="abCompareNotes">比較コメント</label>
-        <textarea id="abCompareNotes" rows="2" placeholder="AとBの違い、美的満足度、意図の反映について記録"></textarea>
+        <textarea autocomplete="off" id="abCompareNotes" rows="2" placeholder="AとBの違い、美的満足度、意図の反映について記録"></textarea>
         <div class="row">
           <button id="abSaveNext" class="grow primary" type="button" disabled>この比較を保存して次へ</button>
         </div>
@@ -1250,7 +1250,7 @@
         <div class="row"><button id="abExportComparisons" class="grow" type="button">比較JSONL</button></div>
         <div class="row"><button id="abExportCopyList" class="grow" type="button">画像コピーリスト</button></div>
         <div class="row"><button id="abLoadResamplePlan" class="grow" type="button">追加レビュー計画を読み込む</button></div>
-        <input id="abResamplePlanInput" type="file" accept=".json,application/json" style="display:none;" />
+        <input id="abResamplePlanInput" type="file" autocomplete="off" accept=".json,application/json" style="display:none;" />
         <div id="abResamplePlanState" class="sub"></div>
         <div class="row"><button id="abDropResamplePlan" class="grow" type="button" hidden>追加レビュー計画をやめる</button></div>
         <div class="row"><button id="abLoadAnother" class="grow" type="button">別のパッケージを読み込む</button></div>
@@ -2622,6 +2622,10 @@
   fileInput.addEventListener("change", function () {
     var file = fileInput.files && fileInput.files[0];
     if (!file) return;
+    // [落ちる対策 2026-09-24] 選んだファイルを選択欄に残さない。Safari は履歴から開き直す(back_forward)とき
+    //  入力欄の中身を復元し、ファイル選択欄も前回のファイルを戻そうとする。iPhone ではそのファイルに
+    //  もう触れず、開くたびにページが落ちて再読み込みを繰り返していた(記録: back_forward で66回連続)。
+    fileInput.value = "";
     var reader = new FileReader();
     reader.onload = function () {
       // [メモリ対策] 全文を入力欄に表示しない(数MBの本文を画面に置くとファイルの数十倍のメモリを使い、
