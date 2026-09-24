@@ -796,33 +796,41 @@
 //  画像表示を止める)で開く。起動の各段階を端末に書き残し、安全モードの画面に表示する(原因を事実で特定する)。
 //  記録(レビュー・実験・画像)には一切触れない。
 (function () {
-  var BUILD = "2026-09-24e";
+  var BUILD = "2026-09-24h";
   var GUARD = "persona.bootGuard.v1", CRUMBS = "persona.bootCrumbs.v1";
   var now = Date.now(), g = null, prevCrumbs = [];
   try { g = JSON.parse(localStorage.getItem(GUARD) || "null"); } catch (_) { g = null; }
   try { prevCrumbs = JSON.parse(localStorage.getItem(CRUMBS) || "[]"); } catch (_) { prevCrumbs = []; }
   // 前回の起動が「安定」に届かないまま終わった = 落ちた
-  var crashed = !!(g && g.pending && now - g.ts < 10 * 60 * 1000);
+  //  (時間では区切らない: 落ちてから時間を空けて開き直しても見落とさない)
+  var crashed = !!(g && g.pending);
   var crashes = crashed ? (g.crashes || 0) + 1 : 0;
   var forced = /(^|[?&])safe=1(&|$)/.test(String(location.search || ""));
+  window.PERSONA_SHOW_LOG = forced || /(^|[?&])log=1(&|$)/.test(String(location.search || ""));
   var normalForced = /(^|[?&])safe=0(&|$)/.test(String(location.search || ""));
   window.PERSONA_BUILD = BUILD;
   window.PERSONA_SAFE_MODE = !normalForced && (forced || crashes >= 1);
-  window.PERSONA_LAST_CRASH_CRUMBS = crashed ? prevCrumbs : [];
-  var crumbs = [];
-  function save() { try { localStorage.setItem(CRUMBS, JSON.stringify(crumbs.slice(-40))); } catch (_) {} }
+  window.PERSONA_LAST_CRASH_CRUMBS = [];
+  //  記録は起動ごとに上書きせず積み上げる(直近300行)。落ちた回の記録が次の起動で消えないようにする。
+  var crumbs = Array.isArray(prevCrumbs) ? prevCrumbs.slice(-300) : [];
+  function save() { try { localStorage.setItem(CRUMBS, JSON.stringify(crumbs.slice(-300))); } catch (_) {} }
   window.personaCrumb = function (step) {
-    crumbs.push(new Date().toISOString().slice(11, 19) + " " + String(step));
+    var d = new Date();
+    crumbs.push((d.getMonth() + 1) + "/" + d.getDate() + " " + d.toTimeString().slice(0, 8) + " " + String(step));
     save();
   };
+  window.personaCrumbLog = function () { return crumbs.slice(); };
   try { localStorage.setItem(GUARD, JSON.stringify({ pending: true, ts: now, crashes: crashes, build: BUILD })); } catch (_) {}
-  window.personaCrumb("boot " + BUILD + (window.PERSONA_SAFE_MODE ? " SAFE" : "") + " crashes=" + crashes);
+  window.personaCrumb("----- boot " + BUILD + (window.PERSONA_SAFE_MODE ? " SAFE" : "") + (crashed ? " (前回は起動途中で終了)" : "") + " crashes=" + crashes
+    + " nav=" + (function () { try { var n = performance.getEntriesByType("navigation")[0]; return n ? n.type : "?"; } catch (_) { return "?"; } })());
   function stable() {
     try { localStorage.setItem(GUARD, JSON.stringify({ pending: false, ts: Date.now(), crashes: 0, build: BUILD })); } catch (_) {}
   }
   // 20秒落ちずに動いたら安定とみなす。利用者が自分で離れた(pagehide)場合も落ちたとは数えない。
   setTimeout(function () { window.personaCrumb("stable"); stable(); }, 20000);
-  window.addEventListener("pagehide", stable);
+  window.addEventListener("pagehide", function () { window.personaCrumb("pagehide"); stable(); });
+  document.addEventListener("visibilitychange", function () { window.personaCrumb("visibility " + document.visibilityState); });
+  window.addEventListener("pageshow", function (e) { window.personaCrumb("pageshow" + (e.persisted ? " (bfcache)" : "")); });
   document.addEventListener("DOMContentLoaded", function () { window.personaCrumb("dom ready"); });
   window.addEventListener("load", function () { window.personaCrumb("load done"); });
   window.addEventListener("error", function (e) { window.personaCrumb("error " + (e && e.message)); });
@@ -833,17 +841,18 @@
   <h1>Persona Generator <span id="personaBuild" style="font-size:12px;font-weight:400;color:var(--text-dim)"></span></h1>
   <div id="personaSafeBanner" hidden style="border:1px solid #c80;background:rgba(200,136,0,.12);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13px;line-height:1.5">
     <strong>安全モードで開きました。</strong>前回ページが開く途中で落ちたため、前の画面への自動復帰と画像の表示を止めています。記録と画像は消えていません。
-    <div style="margin-top:6px"><button type="button" id="personaNormalMode">通常モードで開き直す</button> <button type="button" id="personaCopyCrumbs">落ちる直前の記録をコピー</button></div>
+    <div style="margin-top:6px"><button type="button" id="personaNormalMode">通常モードで開き直す</button> <button type="button" id="personaCopyCrumbs">記録をコピー</button></div>
     <pre id="personaCrumbs" style="white-space:pre-wrap;font-size:11px;max-height:140px;overflow:auto;margin:6px 0 0"></pre>
   </div>
   <script>
   (function () {
     var b = document.getElementById("personaBuild");
     if (b) b.textContent = "版 " + window.PERSONA_BUILD;
-    if (!window.PERSONA_SAFE_MODE) return;
+    if (!window.PERSONA_SAFE_MODE && !window.PERSONA_SHOW_LOG) return;
     var banner = document.getElementById("personaSafeBanner");
     banner.hidden = false;
-    var text = (window.PERSONA_LAST_CRASH_CRUMBS || []).join("\n") || "(記録なし)";
+    if (!window.PERSONA_SAFE_MODE) banner.querySelector("strong").textContent = "記録を表示しています。";
+    var text = (window.personaCrumbLog ? window.personaCrumbLog() : []).join("\n") || "(記録なし)";
     // この端末の保存データの量(同じ sgktmr808.github.io 上の別アプリの分も含む)
     var sizes = [], total = 0;
     try {
@@ -856,12 +865,12 @@
     var diag = "localStorage 合計 " + total + " 文字 / " + sizes.length + " 項目\n"
       + sizes.slice(0, 8).map(function (x) { return "  " + x[0] + ": " + x[1]; }).join("\n");
     text += "\n" + diag;
-    document.getElementById("personaCrumbs").textContent = "落ちる直前の記録:\n" + text;
+    document.getElementById("personaCrumbs").textContent = "記録(古い順・直近300行):\n" + text;
     if (navigator.storage && navigator.storage.estimate) {
       navigator.storage.estimate().then(function (e) {
         var line = "\n保存領域 使用 " + Math.round((e.usage || 0) / 1048576) + "MB / 上限 " + Math.round((e.quota || 0) / 1048576) + "MB";
         text += line;
-        document.getElementById("personaCrumbs").textContent = "落ちる直前の記録:\n" + text;
+        document.getElementById("personaCrumbs").textContent = "記録(古い順・直近300行):\n" + text;
       }, function () {});
     }
     document.getElementById("personaNormalMode").addEventListener("click", function () {
@@ -1436,12 +1445,74 @@
     return nums.map(function (n) { return map[n]; });
   }
 
+  // [保存先の変更 2026-09-24] 解析した全件(本文+設定)は IndexedDB に1回だけ書き、localStorage には
+  //  位置(何件目か)などの小さな情報だけを置く。
+  //  以前は全件を localStorage に書いていたが、生成設定が1件約1.9KB→約8.4KBへ増えたため(8/24〜)件数が多いと
+  //  sgktmr808.github.io の6アプリ共有の約5MB枠を超え、黙って保存に失敗していた(読み直すと全件が消える)。
+  //  さらに前後移動のたびに全件を書き直していた。
+  var BATCH_DB = "personaGenerator.batch", BATCH_STORE = "batch";
+  function openBatchDb() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error("indexedDB unavailable")); return; }
+      var req = indexedDB.open(BATCH_DB, 1);
+      req.onupgradeneeded = function () { var d = req.result; if (!d.objectStoreNames.contains(BATCH_STORE)) d.createObjectStore(BATCH_STORE, { keyPath: "id" }); };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error || new Error("batch db open failed")); };
+    });
+  }
+  function saveBatchItems() {
+    var snapshot = { id: "current", batchId: batchId, items: items, ts: Date.now() };
+    return openBatchDb().then(function (d) {
+      return new Promise(function (resolve, reject) {
+        var tx = d.transaction(BATCH_STORE, "readwrite");
+        tx.objectStore(BATCH_STORE).put(snapshot);
+        tx.oncomplete = function () { d.close(); resolve(); };
+        tx.onerror = tx.onabort = function () { d.close(); reject(tx.error || new Error("batch save failed")); };
+      });
+    }).then(function () { saveToStorage(); }, function (e) {
+      statusEl.textContent = "端末に保存できませんでした。ページが読み直されると解析内容が消えます(" + (e && e.message) + ")。";
+      throw e;
+    });
+  }
+  function loadBatchItems() {
+    return openBatchDb().then(function (d) {
+      return new Promise(function (resolve) {
+        var tx = d.transaction(BATCH_STORE, "readonly");
+        var r = tx.objectStore(BATCH_STORE).get("current");
+        r.onsuccess = function () { resolve(r.result || null); };
+        r.onerror = function () { resolve(null); };
+        tx.oncomplete = function () { d.close(); };
+      });
+    }, function () { return null; });
+  }
+  function clearBatchItems() {
+    return openBatchDb().then(function (d) {
+      return new Promise(function (resolve) {
+        var tx = d.transaction(BATCH_STORE, "readwrite");
+        tx.objectStore(BATCH_STORE).delete("current");
+        tx.oncomplete = tx.onerror = tx.onabort = function () { d.close(); resolve(); };
+      });
+    }, function () {});
+  }
   function saveToStorage() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: items, index: index, batchId: batchId, ts: Date.now() }));
-    } catch (_) { /* 容量超過等は無視(表示は継続) */ }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ index: index, batchId: batchId, count: items.length, itemsIn: "idb", ts: Date.now() }));
+    } catch (_) { /* 位置だけなので容量超過はまず起きない */ }
   }
 
+  // 位置情報だけ(itemsIn:"idb")なら IndexedDB から非同期に戻す。全件入りの旧形式はそのまま読む。
+  function loadFromStorageAsync() {
+    var meta = null;
+    try { meta = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch (_) { meta = null; }
+    if (!meta || meta.itemsIn !== "idb") return Promise.resolve(false);
+    return loadBatchItems().then(function (b) {
+      if (!b || !Array.isArray(b.items) || !b.items.length || b.batchId !== meta.batchId) return false;
+      items = b.items;
+      batchId = b.batchId;
+      index = typeof meta.index === "number" ? Math.max(0, Math.min(items.length - 1, meta.index)) : 0;
+      return true;
+    });
+  }
   function loadFromStorage() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
@@ -2278,7 +2349,8 @@
             return e;
           })
         };
-        n += 1;
+        var dd = reviewDrafts[k];
+        if (dd.images.length || dd.comparisonNotes || dd.removedImageIds.length) n += 1; // 中身のある下書きだけ数える
       });
       return n;
     } catch (_) { return 0; }
@@ -2521,6 +2593,9 @@
   parseButton.addEventListener("click", function () {
     var text = pasteArea.value;
     if (!text.trim()) { statusEl.textContent = "貼り付け欄が空です。"; return; }
+    parseAndLoad(text);
+  });
+  function parseAndLoad(text, sourceName) {
     try {
       var parsed = parseExport(text);
       reviewPreviews.releaseAll();
@@ -2530,14 +2605,14 @@
       reviewDrafts = {};
       clearPersistedReviewDrafts();
       reviewRenderedIndex = -1;
-      saveToStorage();
       renderCurrent();
-      statusEl.textContent = items.length + "件を読み込みました。";
+      statusEl.textContent = (sourceName ? sourceName + " から" : "") + items.length + "件を読み込みました。";
       pasteArea.value = "";
+      saveBatchItems().catch(function () { /* 失敗は statusEl に表示済み */ });
     } catch (e) {
       statusEl.textContent = "解析失敗: " + e.message;
     }
-  });
+  }
 
   fileButton.addEventListener("click", function () {
     fileInput.value = "";
@@ -2549,8 +2624,9 @@
     if (!file) return;
     var reader = new FileReader();
     reader.onload = function () {
-      pasteArea.value = String(reader.result || "");
-      statusEl.textContent = file.name + " を読み込みました。内容を確認して「解析する」を押してください。";
+      // [メモリ対策] 全文を入力欄に表示しない(数MBの本文を画面に置くとファイルの数十倍のメモリを使い、
+      //  iPhone で落ちる原因になる)。読み込んだらそのまま解析する。
+      parseAndLoad(String(reader.result || ""), file.name);
     };
     reader.onerror = function () {
       statusEl.textContent = "ファイルの読み込みに失敗しました: " + file.name;
@@ -2564,6 +2640,7 @@
     index = 0;
     batchId = "";
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* noop */ }
+    clearBatchItems();
     viewer.style.display = "none";
     bottomBar.classList.remove("visible");
     reviewBottomBar.classList.remove("visible");
@@ -2681,6 +2758,8 @@
   personaCrumb("main: items " + ((localStorage.getItem(STORAGE_KEY) || "").length) + " chars");
   if (loadFromStorage()) {
     personaCrumb("main: items loaded n=" + items.length);
+    // 旧形式(全件を localStorage)で残っていた分は IndexedDB へ移し、localStorage は位置情報だけにする。
+    saveBatchItems().catch(function () { /* 移せなくても旧形式のまま使える(表示済み) */ });
     var restoredDrafts = restoreReviewDrafts(); // [再読み込み対策] 未保存の下書き(仮置き画像を含む)を戻す
     personaCrumb("main: drafts " + restoredDrafts);
     renderCurrent();
@@ -2689,6 +2768,14 @@
       + (restoredDrafts ? "保存前の入力も戻しています。" : "");
   } else {
     renderReviewAvailability();
+    loadFromStorageAsync().then(function (ok) {
+      personaCrumb("main: idb items " + (ok ? items.length : 0));
+      if (!ok) return;
+      var restored = restoreReviewDrafts();
+      renderCurrent();
+      if (activeView === "review") switchView("review");
+      statusEl.textContent = "前回の続き(" + items.length + "件)を復元しました。" + (restored ? "保存前の入力も戻しています。" : "");
+    });
   }
 
   // [再読み込み対策] レビュー画面の入力は変わるたびに端末へ書き留める(破棄されても戻せるように)。
