@@ -1246,6 +1246,11 @@
   var batchId = "";
   var activeView = "extract";
   var reviewDrafts = {};
+  // [再読み込み対策 2026-09-24] iOS は別アプリへ切り替えている間に Safari のページを破棄し、戻ると最初から
+  //  読み直す(「問題が起きたため再読み込みされました」)。開いていた画面と、レビューの未保存の下書き
+  //  (付けた画像・評価・メモ)を端末へ随時書き留め、読み直した後もそのまま続けられるようにする。
+  var SESSION_VIEW_KEY = "persona.session.view.v1";
+  var REVIEW_DRAFT_KEY = "persona.reviewDrafts.v1";
   // [メモリ対策 2026-09-23] iPhone の「しばらく使うと再読み込みが繰り返される」現象の対策。
   //  原因は原寸画像のデコード(1枚で数十MB)と、項目を移動しても解放されない object URL の蓄積で
   //  WebKit のタブ上限を超え、Safari がページを強制終了→自動再読み込みしていたこと。
@@ -1372,6 +1377,7 @@
   function switchView(name) {
     if (activeView === "review" && name !== "review") captureReviewDraft();
     activeView = name === "review" ? "review" : (name === "ab" ? "ab" : "extract");
+    try { localStorage.setItem(SESSION_VIEW_KEY, activeView); } catch (_) { /* 保存できなくても切り替えは続ける */ }
     var reviewing = activeView === "review";
     var abMode = activeView === "ab";
     extractTab.setAttribute("aria-selected", (!reviewing && !abMode) ? "true" : "false");
@@ -2154,6 +2160,57 @@
       : "表示中の生成IDにだけ画像を登録します。", false);
   }
 
+  //  画像は付けた時点で画像DBへ仮置き(staged)し、下書きには imageId だけを残す(実体を localStorage に入れない)。
+  function persistReviewDrafts() {
+    try {
+      var out = {};
+      Object.keys(reviewDrafts).forEach(function (k) {
+        var d = reviewDrafts[k];
+        if (!d || !Array.isArray(d.images)) return;
+        out[k] = {
+          comparisonNotes: d.comparisonNotes || "",
+          removedImageIds: (d.removedImageIds || []).slice(),
+          // 仮置きに失敗して実体がメモリにしか無い画像は、読み直すと実体が無いので書き留めない。
+          images: d.images.filter(function (im) { return !im.file || im.staged; }).map(function (im) {
+            return { imageId: im.imageId, metadata: im.metadata || null, evaluation: im.evaluation || null,
+              notes: im.notes || "", legacyStoreKey: im.legacyStoreKey || "", staged: !!im.staged };
+          })
+        };
+      });
+      localStorage.setItem(REVIEW_DRAFT_KEY, JSON.stringify({ batchId: batchId, drafts: out }));
+    } catch (_) { /* 容量不足でも表示と保存操作は続ける */ }
+  }
+  function restoreReviewDrafts() {
+    try {
+      var parsed = JSON.parse(localStorage.getItem(REVIEW_DRAFT_KEY) || "null");
+      if (!parsed || parsed.batchId !== batchId || !parsed.drafts) return 0;
+      var n = 0;
+      Object.keys(parsed.drafts).forEach(function (k) {
+        var d = parsed.drafts[k];
+        if (!d || !Array.isArray(d.images)) return;
+        reviewDrafts[k] = {
+          comparisonNotes: d.comparisonNotes || "",
+          removedImageIds: Array.isArray(d.removedImageIds) ? d.removedImageIds : [],
+          images: d.images.map(function (im) {
+            var e = reviewImageEntry(im.metadata, im.evaluation, im.notes, im.imageId, im.legacyStoreKey || "");
+            e.staged = !!im.staged;
+            return e;
+          })
+        };
+        n += 1;
+      });
+      return n;
+    } catch (_) { return 0; }
+  }
+  function clearPersistedReviewDrafts() {
+    try { localStorage.removeItem(REVIEW_DRAFT_KEY); } catch (_) { /* noop */ }
+  }
+  var persistDraftTimer = null;
+  function schedulePersistReviewDrafts() {
+    if (persistDraftTimer) clearTimeout(persistDraftTimer);
+    persistDraftTimer = setTimeout(function () { persistDraftTimer = null; captureReviewDraft(); persistReviewDrafts(); }, 400);
+  }
+
   function addImagesToCurrent(files) {
     if (!items[index]) return;
     var draft = draftForItem(items[index]);
@@ -2164,6 +2221,11 @@
       var entry = reviewImageEntry(imageMetadata(file, ""), null, "", imageId, "");
       entry.file = file;
       draft.images.push(entry);
+      // 付けた時点で端末へ仮置きする(ページが破棄されても画像を失わない)。
+      putStoredImage(imageId, generationId(items[index]), file, "").then(function () {
+        entry.staged = true;
+        persistReviewDrafts();
+      }, function () { /* 仮置きできなくても保存ボタンでの保存は従来どおり */ });
     });
     document.getElementById("reviewImages").value = "";
     renderReviewImages(draft);
@@ -2179,6 +2241,7 @@
     if (action === "remove") {
       var removed = draft.images.splice(current, 1)[0];
       if (!removed.file) draft.removedImageIds.push(removed.imageId);
+      else if (removed.staged) deleteStoredImage(removed.imageId).catch(function () { /* 残っても保存記録には載らない */ });
       reviewPreviews.release(removed.imageId);
     } else {
       var target = action === "up" ? current - 1 : current + 1;
@@ -2225,6 +2288,18 @@
           if (!stored || !stored.blob) return image.metadata;
           return putStoredImage(image.imageId, generationId(item), stored.blob,
             image.metadata && image.metadata.sha256 || "").then(function () { return image.metadata; });
+        });
+      }
+      if (!image.file && image.staged) {
+        // 読み直し後の仮置き画像: 実体を画像DBから読み戻して、保存時と同じ手順でハッシュを付ける。
+        return getStoredImage(image.imageId).then(function (stored) {
+          if (!stored || !stored.blob) return image.metadata;
+          var f = stored.blob;
+          try { f = new File([stored.blob], stored.name || "image", { type: stored.type || stored.blob.type, lastModified: stored.lastModified || Date.now() }); } catch (_) { /* File 非対応でも blob のまま */ }
+          return sha256File(f).then(function (hash) {
+            image.metadata = imageMetadata(f, hash);
+            return putStoredImage(image.imageId, generationId(item), f, hash).then(function () { return image.metadata; });
+          });
         });
       }
       if (!image.file) return Promise.resolve(image.metadata);
@@ -2287,7 +2362,8 @@
       reviews.push(record);
       writeReviews(reviews);
       draft.removedImageIds = [];
-      draft.images.forEach(function (image) { image.file = null; });
+      draft.images.forEach(function (image) { image.file = null; image.staged = false; });
+      persistReviewDrafts();
       renderReviewProgress();
       renderReviewHistory();
       if (advance && index < items.length - 1) {
@@ -2371,6 +2447,7 @@
       index = 0;
       batchId = "b" + Date.now().toString(36) + "-" + shortHash(text);
       reviewDrafts = {};
+      clearPersistedReviewDrafts();
       reviewRenderedIndex = -1;
       saveToStorage();
       renderCurrent();
@@ -2411,6 +2488,7 @@
     reviewBottomBar.classList.remove("visible");
     reviewPreviews.releaseAll();
     reviewDrafts = {};
+    clearPersistedReviewDrafts();
     reviewRenderedIndex = -1;
     renderReviewAvailability();
     statusEl.textContent = "クリアしました。";
@@ -2491,6 +2569,7 @@
     localStorage.removeItem(REVIEW_STORAGE_KEY);
     clearStoredImages().then(function () {
       reviewDrafts = {};
+      clearPersistedReviewDrafts();
       reviewPreviews.releaseAll();
       renderReviewProgress();
       renderReviewItem();
@@ -2518,11 +2597,28 @@
 
   renderReviewHistory();
   if (loadFromStorage()) {
+    var restoredDrafts = restoreReviewDrafts(); // [再読み込み対策] 未保存の下書き(仮置き画像を含む)を戻す
     renderCurrent();
-    statusEl.textContent = "前回の続き(" + items.length + "件)を復元しました。";
+    statusEl.textContent = "前回の続き(" + items.length + "件)を復元しました。"
+      + (restoredDrafts ? "保存前の入力も戻しています。" : "");
   } else {
     renderReviewAvailability();
   }
+
+  // [再読み込み対策] レビュー画面の入力は変わるたびに端末へ書き留める(破棄されても戻せるように)。
+  reviewView.addEventListener("input", schedulePersistReviewDrafts);
+  reviewView.addEventListener("change", schedulePersistReviewDrafts);
+  // 別アプリへ切り替えたら、表示用の画像を解放してページが破棄されにくくする。戻ったら表示中の分だけ読み直す。
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") {
+      captureReviewDraft();
+      persistReviewDrafts();
+      reviewPreviews.releaseAll();
+    } else if (activeView === "review" && items.length) {
+      renderReviewItem();
+    }
+  });
+  window.addEventListener("pagehide", function () { captureReviewDraft(); persistReviewDrafts(); });
 
 })();
 </script>
@@ -7749,6 +7845,16 @@
     on("abExportCopyList", "click", function () { exportKind("copy-list"); });
     on("abClear", "click", clearAll);
     window.addEventListener("pagehide", releaseAllPreviews);
+    // [再読み込み対策] 別アプリへ切り替えている間は画像のメモリを手放す(iOS に破棄されにくくする)。
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") {
+        // 入力は押した/打った時点で書き留め済み(ここで書き直さない)。画像の表示用メモリだけ手放す。
+        releaseAllPreviews();
+        render();
+      } else if (ui.sourceNo != null && db.pkg) {
+        hydratePreviews(ui.sourceNo);
+      }
+    });
 
     bootstrapWorkspaces();
   }
@@ -7764,6 +7870,13 @@
     if (/(^|[?&])ab=new-guided(&|$)/.test(String(window.location.search || ""))) {
       var entryTab = document.getElementById("abTab");
       if (entryTab) entryTab.click();
+    } else {
+      // [再読み込み対策 2026-09-24] iOS がページを破棄して読み直したとき、開いていた画面へ戻す。
+      var lastView = null;
+      try { lastView = localStorage.getItem("persona.session.view.v1"); } catch (_) { lastView = null; }
+      var lastTab = lastView === "ab" ? document.getElementById("abTab")
+        : (lastView === "review" ? document.getElementById("reviewTab") : null);
+      if (lastTab) lastTab.click();
     }
   } catch (_) { /* 対応しない環境では従来どおり最初の画面のまま */ }
 })();

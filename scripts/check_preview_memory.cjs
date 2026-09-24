@@ -184,12 +184,72 @@ async function main() {
       return { pass: problems.length === 0, problems, size: [blob.size, small.size], dims: [bmp.width, bmp.height] };
     }, "phase4 PersonaPreview unit");
 
+    // ---- フェーズ5 [再読み込み対策]: 保存前の画像・入力は、iOS がページを破棄して読み直しても戻る ----
+    const phase5a = await run(async function () {
+      const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+      const problems = []; const note = (c, m) => { if (!c) problems.push(m); };
+      // フェーズ3の読み直しで計数器が消えているので付け直す
+      window.__urls = { created: [], revoked: 0 };
+      const orv5 = URL.revokeObjectURL.bind(URL);
+      URL.revokeObjectURL = function (u) { window.__urls.revoked += 1; return orv5(u); };
+      document.getElementById("reviewTab").click(); await delay(200);
+      document.getElementById("nextButton").click(); await delay(400);
+      const files = [];
+      for (let i = 0; i < 2; i++) {
+        const c = document.createElement("canvas"); c.width = 2400; c.height = 1800; const ctx = c.getContext("2d");
+        ctx.fillStyle = i ? "#357" : "#a53"; ctx.fillRect(0, 0, 2400, 1800); ctx.fillStyle = "#fff"; ctx.fillRect(200 + i * 300, 300, 800, 600);
+        const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+        files.push(new File([blob], `unsaved-${i}.png`, { type: "image/png" })); c.width = 0; c.height = 0;
+      }
+      const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+      const input = document.getElementById("reviewImages");
+      input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+      const notes = document.getElementById("reviewComparisonNotes");
+      notes.value = "保存前のメモ"; notes.dispatchEvent(new Event("input", { bubbles: true }));
+      // 仮置き(IndexedDB)と下書きの書き留めを待つ
+      let drafted = false;
+      for (let i = 0; i < 100; i++) { const raw = localStorage.getItem("persona.reviewDrafts.v1") || ""; if ((raw.match(/"staged":true/g) || []).length >= 2 && raw.indexOf("保存前のメモ") !== -1) { drafted = true; break; } await delay(150); }
+      note(drafted, "unsaved draft (2 staged images + notes) was not persisted");
+      // 別アプリへ切り替えた状態を再現: 表示用画像を手放す
+      const before = window.__urls.revoked;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      note(window.__urls.revoked - before >= 2, "previews were not released when hidden: revoked=" + (window.__urls.revoked - before));
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      const back = await (async () => { for (let i = 0; i < 100; i++) { const imgs = [...document.querySelectorAll("#reviewImageList img")]; if (imgs.length === 2 && imgs.every((im) => im.complete && im.naturalWidth > 0)) return true; await delay(150); } return false; })();
+      note(back, "previews did not come back when visible again");
+      return { pass: problems.length === 0, problems, sizes: files.map((f) => f.size) };
+    }, "phase5a unsaved draft persisted");
+    await send("Page.reload", {}, sid); await wait(2500);
+    const phase5b = await run(async function (sizes) {
+      const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+      const problems = []; const note = (c, m) => { if (!c) problems.push(m); };
+      // タブを押さずに、読み直しただけでレビュー画面の同じ項目へ戻っていること
+      note(!document.getElementById("reviewView").hidden, "did not return to the review view after reload");
+      const imgs = await (async () => { for (let i = 0; i < 100; i++) { const l = [...document.querySelectorAll("#reviewImageList img")]; if (l.length === 2 && l.every((im) => im.complete && im.naturalWidth > 0)) return l; await delay(150); } return null; })();
+      note(!!imgs, "unsaved images did not come back after reload");
+      note(document.getElementById("reviewComparisonNotes").value === "保存前のメモ", "unsaved notes did not come back");
+      // 戻した下書きをそのまま保存でき、保存記録に原寸の SHA-256 が付く
+      document.getElementById("saveReviewOnlyButton").click();
+      let rec = null;
+      for (let i = 0; i < 200; i++) { const rs = JSON.parse(localStorage.getItem("personaGenerator.promptReviews.v1") || "[]"); rec = rs.find((r) => r && r.source && r.source.no === 2 && Array.isArray(r.images) && r.images.length === 2); if (rec) break; await delay(150); }
+      note(!!rec, "restored draft could not be saved");
+      if (rec) {
+        note(rec.images.every((im) => im.metadata && /^[0-9a-f]{64}$/.test(im.metadata.sha256 || "")), "saved images lack sha256");
+        note(JSON.stringify(rec.images.map((im) => im.metadata.size).sort()) === JSON.stringify(sizes.slice().sort()), "saved sizes are not the originals: " + JSON.stringify([rec.images.map((im) => im.metadata.size), sizes]));
+        note(rec.comparison && rec.comparison.notes === "保存前のメモ", "saved notes mismatch");
+      }
+      return { pass: problems.length === 0, problems };
+    }, "phase5b reload restores unsaved draft", phase5a.sizes);
+
     const errs = events.filter((m) => m.method === "Runtime.exceptionThrown");
     if (errs.length) fail("page threw exceptions", errs.map((m) => m.params.exceptionDetails.text).slice(0, 3));
     console.log("phase1:", JSON.stringify({ dims: phase1.dims, sizes: phase1.sizes, originals: phase1.originals }));
     console.log("phase2:", JSON.stringify({ saved: phase2.saved, peakConcurrentReads: phase2.peak }));
     console.log("phase3:", JSON.stringify({ storedSizes: phase3.stored }));
     console.log("phase4:", JSON.stringify({ size: phase4.size, dims: phase4.dims }));
+    console.log("phase5: unsaved draft survives reload (view, images, notes) and saves with original sha256");
     console.log("PREVIEW MEMORY BROWSER ACCEPTANCE PASSED");
   } finally {
     if (sock) sock.close();
