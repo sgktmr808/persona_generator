@@ -796,7 +796,7 @@
 //  画像表示を止める)で開く。起動の各段階を端末に書き残し、安全モードの画面に表示する(原因を事実で特定する)。
 //  記録(レビュー・実験・画像)には一切触れない。
 (function () {
-  var BUILD = "2026-09-24d";
+  var BUILD = "2026-09-24e";
   var GUARD = "persona.bootGuard.v1", CRUMBS = "persona.bootCrumbs.v1";
   var now = Date.now(), g = null, prevCrumbs = [];
   try { g = JSON.parse(localStorage.getItem(GUARD) || "null"); } catch (_) { g = null; }
@@ -823,6 +823,10 @@
   // 20秒落ちずに動いたら安定とみなす。利用者が自分で離れた(pagehide)場合も落ちたとは数えない。
   setTimeout(function () { window.personaCrumb("stable"); stable(); }, 20000);
   window.addEventListener("pagehide", stable);
+  document.addEventListener("DOMContentLoaded", function () { window.personaCrumb("dom ready"); });
+  window.addEventListener("load", function () { window.personaCrumb("load done"); });
+  window.addEventListener("error", function (e) { window.personaCrumb("error " + (e && e.message)); });
+  setTimeout(function () { window.personaCrumb("alive 5s"); }, 5000);
 })();
 </script>
 <div class="wrap">
@@ -840,7 +844,26 @@
     var banner = document.getElementById("personaSafeBanner");
     banner.hidden = false;
     var text = (window.PERSONA_LAST_CRASH_CRUMBS || []).join("\n") || "(記録なし)";
+    // この端末の保存データの量(同じ sgktmr808.github.io 上の別アプリの分も含む)
+    var sizes = [], total = 0;
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i), v = localStorage.getItem(k) || "";
+        total += k.length + v.length; sizes.push([k, v.length]);
+      }
+    } catch (_) {}
+    sizes.sort(function (a, b) { return b[1] - a[1]; });
+    var diag = "localStorage 合計 " + total + " 文字 / " + sizes.length + " 項目\n"
+      + sizes.slice(0, 8).map(function (x) { return "  " + x[0] + ": " + x[1]; }).join("\n");
+    text += "\n" + diag;
     document.getElementById("personaCrumbs").textContent = "落ちる直前の記録:\n" + text;
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then(function (e) {
+        var line = "\n保存領域 使用 " + Math.round((e.usage || 0) / 1048576) + "MB / 上限 " + Math.round((e.quota || 0) / 1048576) + "MB";
+        text += line;
+        document.getElementById("personaCrumbs").textContent = "落ちる直前の記録:\n" + text;
+      }, function () {});
+    }
     document.getElementById("personaNormalMode").addEventListener("click", function () {
       location.href = location.pathname + "?safe=0";
     });
@@ -2653,10 +2676,15 @@
     }, { passive: true });
   })();
 
+  personaCrumb("main: reviews " + ((localStorage.getItem(REVIEW_STORAGE_KEY) || "").length) + " chars");
   renderReviewHistory();
+  personaCrumb("main: items " + ((localStorage.getItem(STORAGE_KEY) || "").length) + " chars");
   if (loadFromStorage()) {
+    personaCrumb("main: items loaded n=" + items.length);
     var restoredDrafts = restoreReviewDrafts(); // [再読み込み対策] 未保存の下書き(仮置き画像を含む)を戻す
+    personaCrumb("main: drafts " + restoredDrafts);
     renderCurrent();
+    personaCrumb("main: rendered");
     statusEl.textContent = "前回の続き(" + items.length + "件)を復元しました。"
       + (restoredDrafts ? "保存前の入力も戻しています。" : "");
   } else {
